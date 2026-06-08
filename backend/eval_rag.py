@@ -85,7 +85,7 @@ async def build_dataset(docs: list[dict]) -> Dataset:
         q = item["question"]
         contexts = local_search(q, docs)
 
-        prompt = f"根据以下资料回答问题（用朋友聊天的语气，简洁）：\n{'---'.join(contexts)}\n\n问题：{q}"
+        prompt = f"根据以下资料回答问题（用朋友聊天的语气，简洁），只基于以下资料回答，不要补充资料外的内容：\n{'---'.join(contexts)}\n\n问题：{q}"
         response = await eval_llm.ainvoke(prompt)
         answer = response.content
 
