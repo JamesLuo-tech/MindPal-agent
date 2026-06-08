@@ -1,4 +1,5 @@
 """LangChain 工具定义：lookup（RAG+搜索双路）和 recall_memory（语义记忆检索）。"""
+import logging
 from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
@@ -13,6 +14,8 @@ from app.agent.rag import (
     rag_search,
     web_search,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @tool
@@ -56,17 +59,28 @@ async def recall_memory(query: str, config: RunnableConfig) -> str:
     Returns:
         相关历史对话摘要
     """
+    logger.info("[recall_memory] 触发 | query=%s", query)
+
     user_id_str = (config.get("configurable") or {}).get("user_id")
     if not user_id_str:
+        logger.warning("[recall_memory] 缺少 user_id，跳过检索")
         return "无法获取用户身份，记忆检索跳过。"
 
     pool = _db._pool
     if pool is None:
+        logger.error("[recall_memory] 数据库连接池未就绪")
         return "数据库未就绪，记忆检索跳过。"
 
     user_id = UUID(user_id_str)
-    async with pool.acquire() as conn:
-        return await search_memories(user_id, query, conn)
+    try:
+        async with pool.acquire() as conn:
+            result = await search_memories(user_id, query, conn)
+        hit = "暂无" not in result
+        logger.info("[recall_memory] 完成 | user=%s | 命中=%s", user_id_str[:8], hit)
+        return result
+    except Exception as e:
+        logger.exception("[recall_memory] 检索失败 | user=%s | error=%s", user_id_str[:8], e)
+        return "记忆检索出错，请稍后再试。"
 
 
 TOOLS = [lookup, recall_memory]
