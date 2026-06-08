@@ -64,14 +64,40 @@ def get_embedder() -> SentenceTransformer:
     return _embedder
 
 
-def local_search(query: str, docs: list[dict], top_k: int = TOP_K) -> list[str]:
+def _single_search(query: str, corpus_vecs: np.ndarray, top_k: int) -> list[int]:
     embedder = get_embedder()
-    corpus = [d["title"] + " " + d["content"][:200] for d in docs]
-    corpus_vecs = embedder.encode(corpus, normalize_embeddings=True)
     query_vec = embedder.encode(query, normalize_embeddings=True)
     scores = np.dot(corpus_vecs, query_vec)
-    top_indices = np.argsort(scores)[::-1][:top_k]
-    return [docs[i]["content"] for i in top_indices]
+    return np.argsort(scores)[::-1][:top_k].tolist()
+
+
+async def generate_query_variants(query: str) -> list[str]:
+    """用 LLM 将原始查询改写成多种表达，提高召回率。"""
+    prompt = (
+        "请将以下问题改写成3种不同的表达方式，用于检索心理健康知识库。\n"
+        "每种改写单独一行，不要加编号或标点前缀。\n\n"
+        f"原始问题：{query}\n\n3种改写："
+    )
+    response = await eval_llm.ainvoke(prompt)
+    variants = [q.strip() for q in response.content.strip().split("\n") if q.strip()]
+    return [query] + variants[:3]
+
+
+def _rrf(rank_lists: list[list[int]], k: int = 60) -> list[int]:
+    """Reciprocal Rank Fusion：对多组排名列表重新打分，返回合并后的排名。"""
+    scores: dict[int, float] = {}
+    for ranked in rank_lists:
+        for rank, idx in enumerate(ranked):
+            scores[idx] = scores.get(idx, 0.0) + 1.0 / (k + rank + 1)
+    return sorted(scores, key=lambda x: scores[x], reverse=True)
+
+
+async def local_search(query: str, docs: list[dict], corpus_vecs: np.ndarray, top_k: int = TOP_K) -> list[str]:
+    """RAG Fusion 本地检索：生成查询变体 → 各自检索 → RRF 重排。"""
+    variants = await generate_query_variants(query)
+    rank_lists = [_single_search(q, corpus_vecs, top_k) for q in variants]
+    fused = _rrf(rank_lists)
+    return [docs[i]["content"] for i in fused[:top_k]]
 
 
 # ── 构建评估数据集 ─────────────────────────────────────────────────────────
@@ -80,10 +106,14 @@ async def build_dataset(docs: list[dict]) -> Dataset:
     with open(EVAL_FILE, encoding="utf-8") as f:
         questions = json.load(f)
 
+    embedder = get_embedder()
+    corpus = [d["title"] + " " + d["content"][:200] for d in docs]
+    corpus_vecs = embedder.encode(corpus, normalize_embeddings=True)
+
     rows = []
     for item in questions:
         q = item["question"]
-        contexts = local_search(q, docs)
+        contexts = await local_search(q, docs, corpus_vecs)
 
         prompt = f"根据以下资料回答问题（用朋友聊天的语气，简洁），只基于以下资料回答，不要补充资料外的内容：\n{'---'.join(contexts)}\n\n问题：{q}"
         response = await eval_llm.ainvoke(prompt)
