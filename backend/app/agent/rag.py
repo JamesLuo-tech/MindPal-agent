@@ -2,7 +2,7 @@
 
 流程：
   1. 用 BGE-M3 计算查询向量
-  2. pgvector 余弦相似度检索本地知识库
+  2. pgvector 余弦相似度检索本地知识库（支持 multi-query）
   3. 若最高分 >= RAG_THRESHOLD，直接返回
   4. 否则走 SerpAPI 实时搜索（结果缓存 24h 到 Redis）
 """
@@ -158,6 +158,52 @@ def format_serp_results(results: list, answer_box: dict | None = None) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Multi-query 检索
+# ---------------------------------------------------------------------------
+
+async def generate_query_variants(query: str) -> list[str]:
+    """用 LLM 将原始查询改写成多种表达，提高召回率。"""
+    from app.agent.llm import get_llm
+    prompt = (
+        "请将以下问题改写成3种不同的表达方式，用于检索心理健康知识库。\n"
+        "每种改写单独一行，不要加编号或标点前缀。\n\n"
+        f"原始问题：{query}\n\n3种改写："
+    )
+    response = await get_llm().ainvoke(prompt)
+    variants = [q.strip() for q in response.content.strip().split("\n") if q.strip()]
+    return [query] + variants[:3]
+
+
+def _reciprocal_rank_fusion(results_list: list[list[dict]], k: int = 60) -> list[dict]:
+    """RRF 重排：对多组检索结果按排名综合打分，排名越靠前分越高。"""
+    rrf_scores: dict[str, float] = {}
+    doc_map: dict[str, dict] = {}
+
+    for results in results_list:
+        for rank, doc in enumerate(results):
+            doc_id = str(doc["id"])
+            rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
+            doc_map[doc_id] = doc
+
+    sorted_ids = sorted(rrf_scores, key=lambda x: rrf_scores[x], reverse=True)
+    return [doc_map[i] for i in sorted_ids]
+
+
+async def rag_fusion_search(query: str, top_k: int = 3) -> tuple[list[dict], float]:
+    """RAG Fusion：生成查询变体 → 各自检索 → RRF 重排 → 返回最优结果。"""
+    variants = await generate_query_variants(query)
+
+    results_list = []
+    for q in variants:
+        results, _ = await rag_search(q, top_k=top_k)
+        results_list.append(results)
+
+    fused = _reciprocal_rank_fusion(results_list)
+    top_score = float(fused[0]["score"]) if fused else 0.0
+    return fused[:top_k], top_score
 
 
 # ---------------------------------------------------------------------------
