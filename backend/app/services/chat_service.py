@@ -83,6 +83,7 @@ async def stream_chat(
         "conversation_id": str(conversation_id),
         "long_term_memory": long_term,
         "crisis_triggered": False,
+        "agent_type": "",
     }
     graph_config = {"configurable": {"user_id": str(user_id)}}
 
