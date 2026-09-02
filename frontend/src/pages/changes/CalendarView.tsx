@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { format, subDays, eachDayOfInterval } from 'date-fns'
-import { fetchEmotions, type EmotionOut } from '../api/client'
+import { fetchEmotions, type EmotionOut } from '../../api/client'
 
 const EMOTION_COLOR: Record<string, string> = {
   悲伤: '#6b9bd2',
@@ -24,7 +24,7 @@ function intensityOpacity(intensity: number | null): number {
   return 0.3 + ((intensity ?? 5) / 10) * 0.7
 }
 
-export default function EmotionCalendar() {
+export default function CalendarView() {
   const [emotions, setEmotions] = useState<EmotionOut[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -51,19 +51,17 @@ export default function EmotionCalendar() {
   const usedEmotions = [...new Set(emotions.map((e) => e.primary_emotion).filter(Boolean))]
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 max-w-2xl mx-auto">
-      <h1 className="text-xl font-semibold text-gray-800 mb-1">情绪记录</h1>
-      <p className="text-gray-400 text-xs mb-5">近 30 天</p>
-
-      {loading && <p className="text-gray-400 text-sm">加载中…</p>}
-      {error && <p className="text-red-400 text-sm">{error}</p>}
+    <div className="flex-1 overflow-y-auto bg-paper">
+      <div className="max-w-2xl mx-auto px-4 md:px-6 py-6">
+      {loading && <p className="text-ink-soft text-sm">加载中…</p>}
+      {error && <p className="text-red-500 text-sm">{error}</p>}
 
       {!loading && !error && (
         <>
           {/* 日历格子 */}
           <div className="grid grid-cols-7 gap-1.5 mb-6">
             {['日', '一', '二', '三', '四', '五', '六'].map((d) => (
-              <div key={d} className="text-center text-xs text-gray-400 pb-1">
+              <div key={d} className="text-center text-xs text-ink-soft pb-1">
                 {d}
               </div>
             ))}
@@ -79,14 +77,14 @@ export default function EmotionCalendar() {
                 <div
                   key={key}
                   title={top ? `${key}\n${top.primary_emotion} · 强度 ${top.intensity}` : key}
-                  className={`aspect-square rounded-lg flex items-center justify-center text-xs
-                    ${isToday ? 'ring-2 ring-blue-400' : ''}
+                  className={`aspect-square rounded-lg flex items-center justify-center text-xs font-mono tabular-nums
+                    ${isToday ? 'ring-2 ring-sage-400' : ''}
                   `}
                   style={{
                     backgroundColor: top
                       ? emotionColor(top.primary_emotion)
-                      : '#e5e7eb',
-                    opacity: top ? intensityOpacity(top.intensity) + 0.15 : 0.4,
+                      : '#E0D5D3',
+                    opacity: top ? intensityOpacity(top.intensity) + 0.15 : 0.5,
                   }}
                 >
                   <span className="text-white font-medium drop-shadow-sm">
@@ -103,7 +101,7 @@ export default function EmotionCalendar() {
               {usedEmotions.map((em) => (
                 <span
                   key={em}
-                  className="flex items-center gap-1 text-xs text-gray-600 bg-white px-2 py-1 rounded-full shadow-sm"
+                  className="flex items-center gap-1 text-xs text-ink bg-paper-surface px-2 py-1 rounded-full shadow-soft"
                 >
                   <span
                     className="w-2.5 h-2.5 rounded-full inline-block"
@@ -117,25 +115,25 @@ export default function EmotionCalendar() {
 
           {/* 近期列表 */}
           {emotions.length === 0 ? (
-            <p className="text-center text-gray-400 text-sm mt-8">
+            <p className="text-center text-ink-soft text-sm mt-8">
               还没有情绪记录，和 MindPal 聊聊天就会出现这里~
             </p>
           ) : (
             <div className="space-y-2">
-              <p className="text-sm text-gray-500 font-medium mb-2">最近记录</p>
+              <p className="text-sm text-ink-soft font-medium mb-2">最近记录</p>
               {emotions.slice(0, 10).map((e) => (
                 <div
                   key={e.id}
-                  className="flex items-center gap-3 bg-white rounded-xl px-4 py-3 shadow-sm"
+                  className="flex items-center gap-3 bg-paper-surface rounded-xl px-4 py-3 shadow-soft"
                 >
                   <span
                     className="w-3 h-3 rounded-full shrink-0"
                     style={{ backgroundColor: emotionColor(e.primary_emotion) }}
                   />
                   <div className="flex-1 min-w-0">
-                    <span className="text-sm text-gray-800">{e.primary_emotion ?? '其他'}</span>
+                    <span className="text-sm text-ink">{e.primary_emotion ?? '其他'}</span>
                     {e.triggers.length > 0 && (
-                      <span className="text-xs text-gray-400 ml-2">
+                      <span className="text-xs text-ink-soft ml-2">
                         {e.triggers.slice(0, 2).join(' · ')}
                       </span>
                     )}
@@ -149,12 +147,12 @@ export default function EmotionCalendar() {
                           backgroundColor:
                             i < Math.round((e.intensity ?? 5) / 2)
                               ? emotionColor(e.primary_emotion)
-                              : '#e5e7eb',
+                              : '#E0D5D3',
                         }}
                       />
                     ))}
                   </div>
-                  <span className="text-xs text-gray-400 shrink-0">
+                  <span className="font-mono text-[11px] tabular-nums text-ink-soft shrink-0">
                     {e.created_at.slice(5, 10)}
                   </span>
                 </div>
@@ -163,6 +161,7 @@ export default function EmotionCalendar() {
           )}
         </>
       )}
+      </div>
     </div>
   )
 }

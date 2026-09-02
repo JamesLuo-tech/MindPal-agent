@@ -15,13 +15,10 @@ export default function ChatMessage({ message }: Props) {
     return (
       <div className="flex justify-end mb-4 px-1">
         <div className="max-w-[75%]">
-          <div
-            className="px-4 py-3 rounded-2xl rounded-tr-sm text-sm leading-relaxed whitespace-pre-wrap shadow-sm text-white"
-            style={{ backgroundColor: '#E8845A' }}
-          >
+          <div className="px-4 py-3 rounded-2xl rounded-tr-sm text-sm leading-relaxed whitespace-pre-wrap text-white bg-accent-500">
             {message.content}
           </div>
-          <p className="text-xs mt-1 text-right pr-1" style={{ color: '#f0a880' }}>
+          <p className="font-mono text-[11px] tabular-nums mt-1 text-right pr-1 text-ink-soft/80">
             {formatTime(message.createdAt)}
           </p>
         </div>
@@ -32,10 +29,10 @@ export default function ChatMessage({ message }: Props) {
   return (
     <div className="flex justify-start mb-4 px-1">
       <div className="max-w-[80%]">
-        <div className="bg-white text-gray-700 px-4 py-3 rounded-2xl rounded-tl-sm text-sm leading-relaxed whitespace-pre-wrap shadow-sm">
+        <div className="bg-paper-surface text-ink px-4 py-3 rounded-2xl rounded-tl-sm text-sm leading-relaxed whitespace-pre-wrap border border-paper-sunk/50">
           {message.content}
         </div>
-        <p className="text-xs text-gray-400 mt-1 pl-1">
+        <p className="font-mono text-[11px] tabular-nums text-ink-soft/80 mt-1 pl-1">
           {formatTime(message.createdAt)}
         </p>
       </div>

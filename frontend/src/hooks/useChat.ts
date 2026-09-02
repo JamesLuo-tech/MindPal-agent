@@ -41,7 +41,15 @@ export function useChat() {
             speakText(streamingContent).catch(() => {})
           }
         },
-        onError: () => store.setStreaming(false),
+        onError: (err) => {
+          store.setStreaming(false)
+          store.appendMessage({
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: err.message || '出错了，请稍后再试',
+            createdAt: new Date(),
+          })
+        },
       },
       abortRef.current.signal,
     )

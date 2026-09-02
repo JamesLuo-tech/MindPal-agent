@@ -3,9 +3,148 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    /* 与 tailwind.config.js 的 accent 色阶保持一致，供渐变等内联样式引用 */
+    --accent-400: #c48f3e;
+    --accent-500: #a6631f;
+    --accent-600: #8c4f18;
+    --accent-700: #703d12;
+  }
+
   body {
-    background: linear-gradient(135deg, #f8c9b0 0%, #fad9c0 40%, #fde8d8 100%);
+    background: #f4eaec;
+    /* 一盏灯的暖光——克制的单点径向光晕，而非满屏渐变 */
+    background-image: radial-gradient(
+      60% 50% at 50% 0%,
+      rgba(196, 143, 62, 0.16) 0%,
+      rgba(196, 143, 62, 0) 70%
+    );
+    background-attachment: fixed;
     min-height: 100vh;
-    @apply antialiased;
+    @apply antialiased text-ink;
+  }
+
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
+
+  /* 统一的键盘焦点环——用品牌琥珀色代替浏览器默认的蓝色，覆盖所有交互元素，
+     不用在每个按钮/链接上单独加 focus:ring */
+  :focus-visible {
+    outline: 2px solid #DBA85F;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+/* ---- 陪伴小人动效 ---- */
+@keyframes companion-float {
+  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(-8px) rotate(1.5deg); }
+}
+.companion-float {
+  animation: companion-float 3.6s ease-in-out infinite;
+}
+
+@keyframes companion-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  96% { transform: scaleY(0.1); }
+}
+.companion-blink {
+  transform-origin: center;
+  animation: companion-blink 4.5s ease-in-out infinite;
+}
+
+@keyframes companion-pulse {
+  0% { r: 36; opacity: 0.55; }
+  100% { r: 46; opacity: 0; }
+}
+.companion-pulse {
+  transform-origin: center;
+  animation: companion-pulse 1.6s ease-out infinite;
+}
+
+@keyframes companion-twinkle {
+  0%, 100% { opacity: 0.3; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+.companion-twinkle {
+  transform-origin: 82px 27px;
+  animation: companion-twinkle 2.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .companion-float,
+  .companion-blink,
+  .companion-pulse,
+  .companion-twinkle {
+    animation: none !important;
+  }
+}
+
+
+/* ---- 弹出卡片 / 页面切换的入场动效 ---- */
+@keyframes pop-in {
+  0% { opacity: 0; transform: translateY(6px) scale(0.97); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-pop-in {
+  animation: pop-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes page-in {
+  0% { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-page-in {
+  animation: page-in 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pop-in,
+  .animate-page-in {
+    animation: none !important;
+  }
+}
+
+/* ---- 聊天空状态的分步入场：小人先落定，问候语和建议话题接力浮现 ---- */
+@keyframes rise-in {
+  0% { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-rise-in {
+  animation: rise-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise-in {
+    animation: none !important;
+  }
+}
+
+/* ---- 登录浮层背后的小人网格墙 ---- */
+.grid-mascot-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  gap: 26px 6px;
+  padding: 20px;
+  height: 100%;
+}
+/* 错落感用 margin-top（不跟下面 bob 动画的 transform 打架），单数列整体往下错一截 */
+.grid-mascot-wall > div:nth-child(odd) {
+  margin-top: 16px;
+}
+
+@keyframes grid-mascot-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+.grid-mascot {
+  animation: grid-mascot-bob 3.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grid-mascot {
+    animation: none !important;
   }
 }

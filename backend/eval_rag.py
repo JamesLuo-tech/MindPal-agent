@@ -18,7 +18,7 @@ from langchain_openai import ChatOpenAI
 from ragas import evaluate
 from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas.llms import LangchainLLMWrapper
-from ragas.metrics import answer_relevancy, context_precision, faithfulness
+from ragas.metrics import answer_relevancy, context_precision, context_recall, faithfulness
 from sentence_transformers import SentenceTransformer
 
 from app.config import get_settings
@@ -148,7 +148,7 @@ async def main():
     )
     result = evaluate(
         dataset,
-        metrics=[faithfulness, answer_relevancy, context_precision],
+        metrics=[faithfulness, answer_relevancy, context_precision, context_recall],
         llm=ragas_llm,
         embeddings=ragas_embeddings,
     )
@@ -159,6 +159,7 @@ async def main():
     print("  faithfulness     > 0.8 → 回答忠实于检索内容，无幻觉")
     print("  answer_relevancy > 0.7 → 回答切题")
     print("  context_precision> 0.7 → 检索质量好，没捞回无关内容")
+    print("  context_recall   > 0.7 → ground_truth 中的知识点被检索内容覆盖")
 
     out = Path("rag_eval_result.csv")
     result.to_pandas().to_csv(out, index=False)

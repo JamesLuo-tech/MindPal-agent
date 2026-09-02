@@ -76,6 +76,8 @@ async def generate_weekly_report(user_id: UUID, db: asyncpg.Connection) -> dict:
         for r in event_rows
     ]
 
+    activity_trend = await _build_activity_trend(user_id, now, since, db)
+
     summary = await _generate_summary(emotion_trend, key_events)
 
     return {
@@ -83,7 +85,56 @@ async def generate_weekly_report(user_id: UUID, db: asyncpg.Connection) -> dict:
         "emotion_trend": emotion_trend,
         "key_events": key_events,
         "summary": summary,
+        "activity_trend": activity_trend,
     }
+
+
+async def _build_activity_trend(
+    user_id: UUID, now: datetime, since: datetime, db: asyncpg.Connection,
+) -> list[dict]:
+    """近 7 天（含今天）每日心情/精力/睡眠（今日速记）+ 完成的小步行动数量。
+
+    跟 emotion_trend 不同，这里覆盖全部 7 个日历日（没记录的天数字段为 None），
+    好让前端折线图连续，不会因为某天没打卡就断线。
+    """
+    checkin_rows = await db.fetch(
+        """
+        SELECT checkin_date, mood, energy, sleep_hours
+        FROM daily_checkins
+        WHERE user_id = $1 AND checkin_date >= $2
+        """,
+        user_id,
+        since.date(),
+    )
+    completed_rows = await db.fetch(
+        """
+        SELECT completed_at
+        FROM schedule_items
+        WHERE user_id = $1 AND status = 'done' AND completed_at >= $2
+        """,
+        user_id,
+        since,
+    )
+
+    checkin_by_day = {r["checkin_date"].strftime("%Y-%m-%d"): r for r in checkin_rows}
+    completed_by_day: dict[str, int] = defaultdict(int)
+    for r in completed_rows:
+        if r["completed_at"]:
+            completed_by_day[r["completed_at"].strftime("%Y-%m-%d")] += 1
+
+    # 按日历日回溯 7 天，today 本身是最后一个点——避免只用 since+i 导致漏掉今天
+    trend = []
+    for i in range(6, -1, -1):
+        day = (now.date() - timedelta(days=i)).strftime("%Y-%m-%d")
+        checkin = checkin_by_day.get(day)
+        trend.append({
+            "date": day,
+            "avg_mood": checkin["mood"] if checkin else None,
+            "avg_energy": checkin["energy"] if checkin else None,
+            "avg_sleep_hours": float(checkin["sleep_hours"]) if checkin and checkin["sleep_hours"] is not None else None,
+            "completed_steps": completed_by_day.get(day, 0),
+        })
+    return trend
 
 
 async def _generate_summary(

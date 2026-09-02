@@ -22,12 +22,17 @@ export interface ActiveTool {
 // ---- Auth Store ----
 interface AuthState {
   user: User | null
+  /** 首次会话解析（含静默匿名登录）完成之前为 false，用来避免"未登录锁定态"闪一下 */
+  authReady: boolean
   setUser: (user: User | null) => void
+  setAuthReady: (ready: boolean) => void
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
+  authReady: false,
   setUser: (user) => set({ user }),
+  setAuthReady: (authReady) => set({ authReady }),
 }))
 
 // ---- Chat Store ----

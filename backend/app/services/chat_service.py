@@ -10,12 +10,13 @@ import redis.asyncio as aioredis
 from langchain_core.messages import AIMessage, HumanMessage
 
 import app.database as _db
-from app.agent.crisis import HOTLINE_APPEND, check_and_append_hotline
+from app.agent.crisis import CRITICAL_KEYWORDS, HOTLINE_APPEND, check_and_append_hotline
 from app.agent.emotion import extract_emotion, save_emotion
 from app.agent.graph import get_graph
 from app.agent.llm import get_llm
 from app.agent.memory import (
     load_long_term,
+    load_safety_plan,
     load_short_term,
     save_memory,
     save_short_term,
@@ -69,6 +70,17 @@ async def stream_chat(
         print(f"[WARN] 加载长时记忆失败: {e}")
         long_term = ""
 
+    # 命中危机关键词时，把用户自己写过的安全计划一并给 Agent 参考，
+    # 让回应能落到"你安全计划里写的那个方法，要不要现在试试"这种具体程度，
+    # 而不是每轮对话都带上（避免闲聊时被突兀地提起）
+    if any(kw in user_message for kw in CRITICAL_KEYWORDS):
+        try:
+            safety_plan_text = await load_safety_plan(user_id, pool)
+            if safety_plan_text:
+                long_term = f"{long_term}\n\n{safety_plan_text}" if long_term else safety_plan_text
+        except Exception as e:
+            print(f"[WARN] 加载安全计划失败: {e}")
+
     # [3] 重建历史消息列表
     history: list = []
     for m in short_term:
@@ -97,6 +109,11 @@ async def stream_chat(
             kind = event["event"]
 
             if kind == "on_chat_model_stream":
+                # router 节点也会调用一次 LLM 做分类（输出 "empathy"/"knowledge"），
+                # 必须过滤掉，只把真正在回复用户的节点的输出流给前端。
+                node_name = event.get("metadata", {}).get("langgraph_node")
+                if node_name not in ("empathy", "knowledge"):
+                    continue
                 chunk = event["data"]["chunk"]
                 if chunk.content:
                     full_response += chunk.content
@@ -213,6 +230,6 @@ async def _save_messages(
             RETURNING id
             """,
             conversation_id, "assistant", ai_response,
-            json.dumps(used_tools, ensure_ascii=False),
+            used_tools,
         )
     return ai_message_id
