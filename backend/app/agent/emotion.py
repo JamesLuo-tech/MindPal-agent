@@ -79,7 +79,7 @@ async def save_emotion(
         user_id,
         message_id,
         emotion_data["primary_emotion"],
-        json.dumps(emotion_data["secondary_emotions"], ensure_ascii=False),
+        emotion_data["secondary_emotions"],
         emotion_data["intensity"],
-        json.dumps(emotion_data["triggers"], ensure_ascii=False),
+        emotion_data["triggers"],
     )
