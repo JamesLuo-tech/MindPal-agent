@@ -87,12 +87,22 @@ def _get_llm_with_tools():
     return _llm_with_tools
 
 
+_CRISIS_SAFETY_PLAN_HINT = (
+    "\n\n【危机时刻提示】ta 现在的状态被判断为危机时刻。"
+    "如果上面的长期信息里有 ta 自己写过的「安全计划」，可以在合适的时候，"
+    "用朋友的口吻自然地提一句里面具体的内容（比如「你之前写过……要不要现在试试」），"
+    "不要生硬地念条目，也不要一次全说完。如果没有安全计划信息，就正常按第一层接住情绪来回应。"
+)
+
+
 async def empathy_agent_node(state: AgentState) -> dict:
     """情绪陪伴节点：无工具，专注共情回应。"""
     system_content = EMPATHY_PROMPT.format(
         long_term_memory=state.get("long_term_memory") or "（暂无档案）",
         short_term_memory="（已包含在对话历史中）",
     )
+    if state.get("crisis_triggered"):
+        system_content += _CRISIS_SAFETY_PLAN_HINT
     response = await _get_empathy_llm().ainvoke(
         [SystemMessage(content=system_content)] + list(state["messages"])
     )
