@@ -87,6 +87,36 @@ async def load_long_term(user_id: UUID, pool: asyncpg.Pool) -> str:
     return "\n".join(parts)
 
 
+_SAFETY_PLAN_LABELS = {
+    "warning_signs": "预警信号",
+    "internal_coping": "内在应对策略",
+    "distraction_people_places": "让自己分心的人/地方",
+    "help_contacts": "可以求助的人",
+    "professional_contacts": "专业求助渠道",
+    "safe_environment": "让环境更安全",
+}
+
+
+async def load_safety_plan(user_id: UUID, pool: asyncpg.Pool) -> str:
+    """只在命中危机关键词时才会被调用：把用户自己写过的安全计划整理成文本块给 Agent 参考。"""
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            """
+            SELECT warning_signs, internal_coping, distraction_people_places,
+                   help_contacts, professional_contacts, safe_environment
+            FROM safety_plans WHERE user_id = $1
+            """,
+            user_id,
+        )
+    if not row:
+        return ""
+
+    lines = [f"- {label}：{row[key]}" for key, label in _SAFETY_PLAN_LABELS.items() if row[key]]
+    if not lines:
+        return ""
+    return "[用户自己写过的安全计划]\n" + "\n".join(lines)
+
+
 async def search_memories(
     user_id: UUID,
     query: str,
