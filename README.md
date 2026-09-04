@@ -101,6 +101,7 @@ cd frontend
 npm install
 npm run dev
 ```
+<img width="1483" height="862" alt="image" src="https://github.com/user-attachments/assets/4a6c8a3b-e624-4646-ad79-91bd746e54aa" />
 
 前端跑在 `http://localhost:5173`。
 
