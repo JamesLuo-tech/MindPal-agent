@@ -33,6 +33,14 @@ export function useChat() {
           setTimeout(() => store.setActiveTool(null), 1200)
         },
         onDelta: (delta) => store.appendStreamDelta(delta),
+        onActionProposal: (d) => {
+          store.setPendingProposal({
+            proposalId: d.proposal_id,
+            action: d.action,
+            params: d.params,
+            summary: d.summary,
+          })
+        },
         onDone: (d) => {
           // 用 getState() 取最新值，避免闭包拿到旧快照
           const { streamingContent, voiceEnabled, commitStreamedMessage } = useChatStore.getState()

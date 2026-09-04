@@ -1,12 +1,16 @@
 import { useSearchParams } from 'react-router-dom'
 import CalendarView from './changes/CalendarView'
 import TrendView from './changes/TrendView'
+import AppointmentSummaryView from './changes/AppointmentSummaryView'
+
+type View = 'calendar' | 'trend' | 'summary'
 
 export default function Changes() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const view = searchParams.get('view') === 'trend' ? 'trend' : 'calendar'
+  const rawView = searchParams.get('view')
+  const view: View = rawView === 'trend' || rawView === 'summary' ? rawView : 'calendar'
 
-  function setView(v: 'calendar' | 'trend') {
+  function setView(v: View) {
     setSearchParams(v === 'calendar' ? {} : { view: v })
   }
 
@@ -34,10 +38,20 @@ export default function Changes() {
           >
             趋势
           </button>
+          <button
+            onClick={() => setView('summary')}
+            className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors ${
+              view === 'summary' ? 'bg-paper-surface shadow-soft text-ink' : 'text-ink-soft'
+            }`}
+          >
+            问诊摘要
+          </button>
         </div>
       </div>
 
-      {view === 'calendar' ? <CalendarView /> : <TrendView />}
+      {view === 'calendar' && <CalendarView />}
+      {view === 'trend' && <TrendView />}
+      {view === 'summary' && <AppointmentSummaryView />}
     </div>
   )
 }

@@ -9,6 +9,7 @@ import type { WeeklyReportOut } from '../api/client'
 vi.mock('../api/client', () => ({
   fetchEmotions: vi.fn(),
   fetchWeeklyReport: vi.fn(),
+  fetchAppointmentSummary: vi.fn(),
 }))
 
 const REPORT: WeeklyReportOut = {
@@ -51,5 +52,15 @@ describe('Changes', () => {
   it('respects an initial ?view=trend deep link', async () => {
     renderChanges('/changes?view=trend')
     expect(await screen.findByText('这周整体还算平稳，谢谢你一直在说。')).toBeInTheDocument()
+  })
+
+  it('switches to the appointment summary view when 问诊摘要 is clicked', async () => {
+    const user = userEvent.setup()
+    renderChanges()
+    await screen.findByText('还没有情绪记录，和 MindPal 聊聊天就会出现这里~')
+
+    await user.click(screen.getByText('问诊摘要'))
+
+    expect(screen.getByText('生成问诊摘要')).toBeInTheDocument()
   })
 })

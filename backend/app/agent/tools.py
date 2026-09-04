@@ -11,7 +11,7 @@ from app.agent.rag import (
     RAG_THRESHOLD,
     format_rag_results,
     log_lookup,
-    rag_search,
+    rag_fusion_search,
     web_search,
 )
 
@@ -33,7 +33,9 @@ async def lookup(query: str) -> str:
     Returns:
         相关信息摘要（2-3 条），供你用朋友聊天的方式讲出来
     """
-    results, top_score = await rag_search(query, top_k=3)
+    # RAG Fusion：把原始问题改写成几种不同表达分别检索，再用 RRF 融合排序，
+    # 缓解用户口语化提问和知识库书面表达之间的措辞落差导致的召回不足
+    results, top_score = await rag_fusion_search(query, top_k=3)
 
     if top_score >= RAG_THRESHOLD:
         await log_lookup(

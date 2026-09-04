@@ -193,13 +193,18 @@ def _reciprocal_rank_fusion(results_list: list[list[dict]], k: int = 60) -> list
 
 
 async def rag_fusion_search(query: str, top_k: int = 3) -> tuple[list[dict], float]:
-    """RAG Fusion：生成查询变体 → 各自检索 → RRF 重排 → 返回最优结果。"""
+    """RAG Fusion：生成查询变体 → 各自并发检索 → RRF 重排 → 返回最优结果。
+
+    并发发起各变体的检索（互相独立的只读查询），避免叠加成 4 次串行往返——
+    这条路径现在挂在实时聊天的 lookup 工具上，比原来只在离线评测脚本里跑
+    多了延迟敏感这一层考虑。
+    """
     variants = await generate_query_variants(query)
 
-    results_list = []
-    for q in variants:
-        results, _ = await rag_search(q, top_k=top_k)
-        results_list.append(results)
+    results_list = await asyncio.gather(
+        *(rag_search(q, top_k=top_k) for q in variants)
+    )
+    results_list = [results for results, _ in results_list]
 
     fused = _reciprocal_rank_fusion(results_list)
     top_score = float(fused[0]["score"]) if fused else 0.0

@@ -4,6 +4,7 @@ import { useChat } from '../hooks/useChat'
 import ChatMessage from '../components/ChatMessage'
 import ChatInput from '../components/ChatInput'
 import ToolUseIndicator from '../components/ToolUseIndicator'
+import ActionProposalCard from '../components/ActionProposalCard'
 import Companion, { type CompanionMood } from '../components/Companion'
 import { createConversation } from '../api/client'
 
@@ -24,7 +25,7 @@ export default function Chat() {
   const {
     messages, streaming, streamingContent, activeTool,
     activeConversationId, setActiveConversation,
-    voiceEnabled, setVoiceEnabled,
+    voiceEnabled, setVoiceEnabled, pendingProposal,
   } = useChatStore()
   const { sendMessage } = useChat()
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -46,7 +47,7 @@ export default function Chat() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, streamingContent, activeTool])
+  }, [messages, streamingContent, activeTool, pendingProposal])
 
   return (
     <div className="flex flex-col h-full">
@@ -144,6 +145,9 @@ export default function Chat() {
               </div>
             </div>
           )}
+
+          {/* Agent 提议了一个写入动作，等用户确认才真正落库 */}
+          {pendingProposal && <ActionProposalCard proposal={pendingProposal} />}
 
           <div ref={bottomRef} />
         </div>

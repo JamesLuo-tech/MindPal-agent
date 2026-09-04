@@ -60,12 +60,20 @@ export function createConversation(title?: string) {
 
 // ---- Chat SSE ----
 
+export interface ActionProposalPayload {
+  proposal_id: string
+  action: string
+  params: Record<string, unknown>
+  summary: string
+}
+
 export interface ChatSSEHandlers {
   onToolUse?: (data: { tool: string; query?: string; status: string }) => void
   onToolResult?: (data: { tool: string; status: string }) => void
   onDelta?: (delta: string) => void
   onDone?: (data: { message_id: string; crisis_triggered: boolean }) => void
   onError?: (err: Error) => void
+  onActionProposal?: (data: ActionProposalPayload) => void
 }
 
 export async function streamChat(
@@ -90,9 +98,10 @@ export async function streamChat(
       onmessage(ev) {
         const data = JSON.parse(ev.data)
         switch (ev.event) {
-          case 'tool_use':    handlers.onToolUse?.(data);    break
-          case 'tool_result': handlers.onToolResult?.(data); break
-          case 'message':     handlers.onDelta?.(data.delta); break
+          case 'tool_use':        handlers.onToolUse?.(data);        break
+          case 'tool_result':     handlers.onToolResult?.(data);     break
+          case 'message':         handlers.onDelta?.(data.delta);    break
+          case 'action_proposal': handlers.onActionProposal?.(data); break
           case 'done':
             doneReceived = true
             handlers.onDone?.(data)
@@ -322,4 +331,35 @@ export function createTrustedContact(payload: TrustedContactCreate) {
 
 export function deleteTrustedContact(id: string) {
   return apiFetch<void>(`/api/support/contacts/${id}`, { method: 'DELETE' })
+}
+
+// ---- Chat Actions（确认后才真正落库的写入动作）----
+
+export interface ActionConfirmResult {
+  action: string
+  result: Record<string, unknown>
+}
+
+/** 用户在确认卡片上点了"确认"后调用——真正的数据库写入只在这一步发生 */
+export function confirmAction(action: string, params: Record<string, unknown>) {
+  return apiFetch<ActionConfirmResult>('/api/chat/actions/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ action, params }),
+  })
+}
+
+// ---- Appointment Summary（问诊摘要）----
+
+export interface AppointmentSummaryOut {
+  period: string
+  bullets: string[]
+  discuss_topics: string | null
+  generated_at: string
+}
+
+export function fetchAppointmentSummary(days: number, discussTopics?: string) {
+  return apiFetch<AppointmentSummaryOut>('/api/reports/appointment-summary', {
+    method: 'POST',
+    body: JSON.stringify({ days, discuss_topics: discussTopics || null }),
+  })
 }

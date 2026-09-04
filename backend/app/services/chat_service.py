@@ -4,12 +4,13 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import AsyncGenerator
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import redis.asyncio as aioredis
 from langchain_core.messages import AIMessage, HumanMessage
 
 import app.database as _db
+from app.agent.actions import ACTION_TOOL_NAMES
 from app.agent.crisis import CRITICAL_KEYWORDS, HOTLINE_APPEND, check_and_append_hotline
 from app.agent.emotion import extract_emotion, save_emotion
 from app.agent.graph import get_graph
@@ -29,6 +30,47 @@ MEMORY_SAVE_INTERVAL = 5
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+# 哪些节点的 LLM 输出流该转发给前端。router 自己的分类调用、run_segment 里
+# 每一段单独的（未经合并的）回答都不该被用户看到——多意图场景下，只有 merge
+# 合成后的最终文字才是真正的回复。单意图场景完全不受影响：那时 merge 只是
+# 纯透传，不会调 LLM，也就不会产生这类事件。
+_STREAMABLE_NODES = frozenset({"empathy", "knowledge", "action", "merge"})
+
+
+def should_forward_chat_stream(node_name: str | None) -> bool:
+    """判断某个 on_chat_model_stream 事件要不要转发给前端。
+
+    单独抽成纯函数，好在不用起 graph/DB/Redis 的情况下测试这条过滤规则——
+    尤其是多意图路径下"中间分支不该被转发、只有合并结果该被转发"这条约束。
+    """
+    return node_name in _STREAMABLE_NODES
+
+
+def parse_action_proposal(tool_name: str, output: object) -> dict | None:
+    """把某个 propose_* 工具的原始输出解析成 {action, params, summary}；
+    不是 action 工具、或者解析失败（不该发生，但防御一下）时返回 None。
+
+    单独抽成纯函数，好在不用起 graph/DB/Redis 的情况下测试这段解析逻辑。
+    """
+    if tool_name not in ACTION_TOOL_NAMES:
+        return None
+
+    raw = getattr(output, "content", None)
+    if raw is None:
+        raw = str(output) if output is not None else ""
+
+    try:
+        proposal = json.loads(raw)
+        return {
+            "action": proposal["action"],
+            "params": proposal["params"],
+            "summary": proposal["summary"],
+        }
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        print(f"[WARN] 解析 action 提议失败: {e} | raw={raw!r}")
+        return None
 
 
 async def _check_rate_limit(user_id: UUID, redis: aioredis.Redis) -> bool:
@@ -109,10 +151,8 @@ async def stream_chat(
             kind = event["event"]
 
             if kind == "on_chat_model_stream":
-                # router 节点也会调用一次 LLM 做分类（输出 "empathy"/"knowledge"），
-                # 必须过滤掉，只把真正在回复用户的节点的输出流给前端。
                 node_name = event.get("metadata", {}).get("langgraph_node")
-                if node_name not in ("empathy", "knowledge"):
+                if not should_forward_chat_stream(node_name):
                     continue
                 chunk = event["data"]["chunk"]
                 if chunk.content:
@@ -130,7 +170,14 @@ async def stream_chat(
                 })
 
             elif kind == "on_tool_end":
-                yield _sse("tool_result", {"tool": event["name"], "status": "done"})
+                tool_name = event["name"]
+                yield _sse("tool_result", {"tool": tool_name, "status": "done"})
+
+                # propose_* 工具只生成了一条待确认的提议，转成 action_proposal 事件
+                # 推给前端弹确认卡片——真正的数据库写入要等用户点确认后另外调接口。
+                proposal = parse_action_proposal(tool_name, event["data"].get("output"))
+                if proposal:
+                    yield _sse("action_proposal", {"proposal_id": str(uuid4()), **proposal})
 
     except Exception as e:
         yield _sse("error", {"code": "agent_error", "message": str(e)})

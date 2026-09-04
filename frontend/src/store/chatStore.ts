@@ -19,6 +19,13 @@ export interface ActiveTool {
   status: 'searching' | 'done'
 }
 
+export interface ActionProposal {
+  proposalId: string
+  action: string
+  params: Record<string, unknown>
+  summary: string
+}
+
 // ---- Auth Store ----
 interface AuthState {
   user: User | null
@@ -44,6 +51,8 @@ interface ChatState {
   streamingContent: string
   activeTool: ActiveTool | null
   voiceEnabled: boolean
+  /** Agent 提议了一个待确认的写入动作（比如记一笔心情、加一条小行动），等用户点确认/取消 */
+  pendingProposal: ActionProposal | null
 
   setConversations: (convs: Conversation[]) => void
   setActiveConversation: (id: string) => void
@@ -54,6 +63,7 @@ interface ChatState {
   commitStreamedMessage: (messageId: string, crisisTriggered: boolean) => void
   setActiveTool: (tool: ActiveTool | null) => void
   setVoiceEnabled: (v: boolean) => void
+  setPendingProposal: (proposal: ActionProposal | null) => void
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -64,6 +74,7 @@ export const useChatStore = create<ChatState>((set) => ({
   streamingContent: '',
   activeTool: null,
   voiceEnabled: false,
+  pendingProposal: null,
 
   setConversations: (conversations) => set({ conversations }),
   setActiveConversation: (id) =>
@@ -89,4 +100,5 @@ export const useChatStore = create<ChatState>((set) => ({
     })),
   setActiveTool: (activeTool) => set({ activeTool }),
   setVoiceEnabled: (voiceEnabled) => set({ voiceEnabled }),
+  setPendingProposal: (pendingProposal) => set({ pendingProposal }),
 }))

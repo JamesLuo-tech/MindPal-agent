@@ -1,0 +1,337 @@
+[
+  {
+    "id": "empathy_01",
+    "history": [],
+    "message": "我今天真的很难受，感觉什么都不想做",
+    "expected_agent_types": ["empathy"],
+    "expect_crisis": false,
+    "note": "纯情绪倾诉，没有具体求助方法或记录意图"
+  },
+  {
+    "id": "empathy_02",
+    "history": [],
+    "message": "最近压力好大，感觉快撑不住了",
+    "expected_agent_types": ["empathy"],
+    "expect_crisis": false,
+    "note": "情绪倾诉，没有明确要方法"
+  },
+  {
+    "id": "empathy_03",
+    "history": [],
+    "message": "今天被领导说了一顿，心里挺委屈的",
+    "expected_agent_types": ["empathy"],
+    "expect_crisis": false,
+    "note": "具体事件+情绪，没有求助或记录意图"
+  },
+  {
+    "id": "empathy_04",
+    "history": [],
+    "message": "我觉得自己什么都做不好，很没用",
+    "expected_agent_types": ["empathy"],
+    "expect_crisis": false,
+    "note": "自我否定式倾诉"
+  },
+  {
+    "id": "empathy_05",
+    "history": [],
+    "message": "跟朋友吵架了，现在谁都不想理",
+    "expected_agent_types": ["empathy"],
+    "expect_crisis": false,
+    "note": "具体事件倾诉"
+  },
+  {
+    "id": "empathy_06",
+    "history": [],
+    "message": "只是想找个人说说话而已",
+    "expected_agent_types": ["empathy"],
+    "expect_crisis": false,
+    "note": "明确表达只是想倾诉，不要建议"
+  },
+  {
+    "id": "knowledge_01",
+    "history": [],
+    "message": "焦虑发作的时候要怎么快速让自己平静下来",
+    "expected_agent_types": ["knowledge"],
+    "expect_crisis": false,
+    "note": "明确求助具体方法"
+  },
+  {
+    "id": "knowledge_02",
+    "history": [],
+    "message": "CBT具体是怎么操作的",
+    "expected_agent_types": ["knowledge"],
+    "expect_crisis": false,
+    "note": "求信息/概念解释"
+  },
+  {
+    "id": "knowledge_03",
+    "history": [],
+    "message": "抗抑郁药一般要吃多久才有效果",
+    "expected_agent_types": ["knowledge"],
+    "expect_crisis": false,
+    "note": "求具体信息"
+  },
+  {
+    "id": "knowledge_04",
+    "history": [],
+    "message": "季节性抑郁要怎么应对",
+    "expected_agent_types": ["knowledge"],
+    "expect_crisis": false,
+    "note": "求应对方法"
+  },
+  {
+    "id": "knowledge_05",
+    "history": [],
+    "message": "正念冥想新手要怎么开始练",
+    "expected_agent_types": ["knowledge"],
+    "expect_crisis": false,
+    "note": "求具体操作步骤"
+  },
+  {
+    "id": "knowledge_06",
+    "history": [],
+    "message": "什么时候应该去看精神科",
+    "expected_agent_types": ["knowledge"],
+    "expect_crisis": false,
+    "note": "求判断标准/信息"
+  },
+  {
+    "id": "action_01",
+    "history": [],
+    "message": "帮我记一下今天的心情，大概4分吧",
+    "expected_agent_types": ["action"],
+    "expect_crisis": false,
+    "note": "record_mood 典型场景"
+  },
+  {
+    "id": "action_02",
+    "history": [],
+    "message": "加一条待办，晚上出门散步10分钟",
+    "expected_agent_types": ["action"],
+    "expect_crisis": false,
+    "note": "create_micro_action 典型场景"
+  },
+  {
+    "id": "action_03",
+    "history": [
+      {"role": "user", "content": "我打算晚上出去散步10分钟"},
+      {"role": "assistant", "content": "挺好的，记得注意安全"}
+    ],
+    "message": "刚才说的散步那件事我做完了",
+    "expected_agent_types": ["action"],
+    "expect_crisis": false,
+    "note": "update_action_status(done)，同时也测试指代"
+  },
+  {
+    "id": "action_04",
+    "history": [],
+    "message": "晚点提醒我一下，问问我感觉怎么样",
+    "expected_agent_types": ["action"],
+    "expect_crisis": false,
+    "note": "schedule_checkin 典型场景"
+  },
+  {
+    "id": "action_05",
+    "history": [],
+    "message": "刚才试了深呼吸，感觉还挺有用的，帮我记一下",
+    "expected_agent_types": ["action"],
+    "expect_crisis": false,
+    "note": "record_coping_result 典型场景"
+  },
+  {
+    "id": "action_06",
+    "history": [],
+    "message": "这个方法挺有效的，帮我存进你的长期记忆里",
+    "expected_agent_types": ["action"],
+    "expect_crisis": false,
+    "note": "save_memory 典型场景"
+  },
+  {
+    "id": "action_07",
+    "history": [],
+    "message": "帮我把安全计划里的求助联系人更新一下，写我姐姐的电话",
+    "expected_agent_types": ["action"],
+    "expect_crisis": false,
+    "note": "update_safety_plan 典型场景"
+  },
+  {
+    "id": "action_08",
+    "history": [],
+    "message": "早上说的那件事我不打算做了，帮我标记一下放弃",
+    "expected_agent_types": ["action"],
+    "expect_crisis": false,
+    "note": "update_action_status(skipped)"
+  },
+  {
+    "id": "crisis_01",
+    "history": [],
+    "message": "我最近特别难受，一点都不想活了",
+    "expected_agent_types": ["empathy"],
+    "expect_crisis": true,
+    "note": "命中关键词「不想活」，应直接短路不调 LLM"
+  },
+  {
+    "id": "crisis_02",
+    "history": [],
+    "message": "有时候真的觉得自己想死",
+    "expected_agent_types": ["empathy"],
+    "expect_crisis": true,
+    "note": "命中关键词「想死」"
+  },
+  {
+    "id": "crisis_03",
+    "history": [],
+    "message": "站在阳台上会忍不住想跳楼",
+    "expected_agent_types": ["empathy"],
+    "expect_crisis": true,
+    "note": "命中关键词「跳楼」"
+  },
+  {
+    "id": "crisis_04",
+    "history": [],
+    "message": "药我已经买好了，准备好了",
+    "expected_agent_types": ["empathy"],
+    "expect_crisis": true,
+    "note": "命中关键词「买好了药」「准备好了」，高危信号"
+  },
+  {
+    "id": "context_01",
+    "history": [
+      {"role": "user", "content": "我最近在练正念冥想"},
+      {"role": "assistant", "content": "听起来是个不错的方法，效果怎么样"}
+    ],
+    "message": "那个方法挺有用的，帮我记一下",
+    "expected_agent_types": ["action"],
+    "expect_crisis": false,
+    "note": "指代消解：\"那个方法\"要结合历史才知道是正念冥想，属于 record_coping_result"
+  },
+  {
+    "id": "context_02",
+    "history": [
+      {"role": "user", "content": "我打算晚上出去散步"},
+      {"role": "assistant", "content": "挺好的，记得注意安全"}
+    ],
+    "message": "那件事我做完了",
+    "expected_agent_types": ["action"],
+    "expect_crisis": false,
+    "note": "指代消解：\"那件事\"指散步，update_action_status"
+  },
+  {
+    "id": "context_03",
+    "history": [
+      {"role": "user", "content": "我最近总是很焦虑"},
+      {"role": "assistant", "content": "有什么具体的场景让你觉得焦虑吗"}
+    ],
+    "message": "上班的时候，尤其是开会",
+    "expected_agent_types": ["empathy"],
+    "expect_crisis": false,
+    "note": "继续倾诉具体场景，不是求方法也不是记录"
+  },
+  {
+    "id": "context_04",
+    "history": [
+      {"role": "user", "content": "我想了解一下CBT"},
+      {"role": "assistant", "content": "CBT核心是识别自动思维、用更平衡的视角重新看待事件"}
+    ],
+    "message": "那对我这种一直往坏处想的情况有用吗",
+    "expected_agent_types": ["knowledge"],
+    "expect_crisis": false,
+    "note": "继续追问信息，指代\"那\"=CBT"
+  },
+  {
+    "id": "boundary_01",
+    "history": [],
+    "message": "失眠已经好几天了，我该怎么办啊",
+    "expected_agent_types": ["knowledge"],
+    "expect_crisis": false,
+    "note": "边界案例：带情绪色彩但核心是明确求方法（\"该怎么办\"），容易被误判成 empathy"
+  },
+  {
+    "id": "boundary_02",
+    "history": [],
+    "message": "我现在就是很焦虑，坐立不安，有什么办法能让我好受一点",
+    "expected_agent_types": ["knowledge"],
+    "expect_crisis": false,
+    "note": "边界案例：前半句像倾诉，后半句明确求方法，应该整体判 knowledge"
+  },
+  {
+    "id": "boundary_03",
+    "history": [],
+    "message": "我是不是应该去看看医生了",
+    "expected_agent_types": ["knowledge"],
+    "expect_crisis": false,
+    "note": "边界案例：疑问句式容易被读成自我怀疑式倾诉，但本质是在求判断标准"
+  },
+  {
+    "id": "boundary_04",
+    "history": [],
+    "message": "我想把「早睡」定成每天的一个小习惯",
+    "expected_agent_types": ["action"],
+    "expect_crisis": false,
+    "note": "边界案例：没有\"帮我记一下\"这种明显触发词，但实质是 create_micro_action"
+  },
+  {
+    "id": "multi_01",
+    "history": [],
+    "message": "我今天挺难受的，另外帮我记一下心情，大概3分",
+    "expected_agent_types": ["empathy", "action"],
+    "expect_crisis": false,
+    "note": "经典双意图：倾诉+记录"
+  },
+  {
+    "id": "multi_02",
+    "history": [],
+    "message": "我最近老是很焦虑，睡不着，帮我查一下有什么方法，另外顺便记一下我现在的心情是2分",
+    "expected_agent_types": ["knowledge", "action"],
+    "expect_crisis": false,
+    "note": "真实踩过的坑：live smoke test 里这条被两段都判成了 action，\"查方法\"的知识意图完全丢失，专门留着回归"
+  },
+  {
+    "id": "multi_03",
+    "history": [],
+    "message": "谢谢你陪我聊，另外能不能把刚才说的深呼吸方法帮我存进长期记忆",
+    "expected_agent_types": ["empathy", "action"],
+    "expect_crisis": false,
+    "note": "感谢+记录，双意图"
+  },
+  {
+    "id": "multi_04",
+    "history": [],
+    "message": "我压力好大，睡不着，你有什么缓解的建议吗，另外也帮我加个待办提醒自己十一点前睡",
+    "expected_agent_types": ["knowledge", "action"],
+    "expect_crisis": false,
+    "note": "求方法+加日程，双意图"
+  },
+  {
+    "id": "multi_05",
+    "history": [],
+    "message": "我不想再吃药了，感觉没什么用，但还是先帮我把这件事记到安全计划里吧",
+    "expected_agent_types": ["empathy", "action"],
+    "expect_crisis": false,
+    "note": "对治疗的情绪化表达+明确记录意图，边界案例，允许被判成 knowledge+action（讨论用药本身也算求信息）"
+  },
+  {
+    "id": "multi_06",
+    "history": [],
+    "message": "今天心情很低落，5分里打2分吧，然后我也不知道接下来要怎么办",
+    "expected_agent_types": ["action", "empathy"],
+    "expect_crisis": false,
+    "note": "记录+情绪倾诉，顺序反过来测一下"
+  },
+  {
+    "id": "multi_07",
+    "history": [],
+    "message": "帮我记一下今天试过深呼吸没什么用，另外深呼吸还有没有别的替代方法",
+    "expected_agent_types": ["action", "knowledge"],
+    "expect_crisis": false,
+    "note": "record_coping_result + 求新方法，双意图"
+  },
+  {
+    "id": "single_not_multi_01",
+    "history": [],
+    "message": "早上那件散步的事我做完了，感觉整个人轻松多了",
+    "expected_agent_types": ["action"],
+    "expect_crisis": false,
+    "note": "反例：不该被拆分——\"感觉轻松多了\"是对同一件事的补充描述，不是独立的第二个意图，整句当 action 处理即可"
+  }
+]

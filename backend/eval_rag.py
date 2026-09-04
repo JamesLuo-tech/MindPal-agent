@@ -146,6 +146,11 @@ async def main():
     ragas_embeddings = LangchainEmbeddingsWrapper(
         HuggingFaceEmbeddings(model_name="BAAI/bge-m3")
     )
+    # answer_relevancy 默认 strictness=3，会在一次请求里带 n=3 生成多个反推问题做自洽性检验，
+    # 但 DeepSeek 的 chat completions 只支持 n=1，之前跑一版有 40/49 行直接报错拿不到分数
+    # （'Invalid n value (currently only n = 1 is supported)'）。降到 strictness=1 换成
+    # 单次生成，牺牲一点统计稳健性但能让这个指标真正跑起来，而不是拿不完整的样本硬凑均值。
+    answer_relevancy.strictness = 1
     result = evaluate(
         dataset,
         metrics=[faithfulness, answer_relevancy, context_precision, context_recall],
