@@ -8,10 +8,12 @@ from langchain_core.tools import tool
 import app.database as _db
 from app.agent.memory import search_memories
 from app.agent.rag import (
+    RAG_FUSION_MIN_SCORE,
     RAG_THRESHOLD,
     format_rag_results,
     log_lookup,
     rag_fusion_search,
+    rag_search,
     web_search,
 )
 
@@ -33,9 +35,16 @@ async def lookup(query: str) -> str:
     Returns:
         相关信息摘要（2-3 条），供你用朋友聊天的方式讲出来
     """
-    # RAG Fusion：把原始问题改写成几种不同表达分别检索，再用 RRF 融合排序，
-    # 缓解用户口语化提问和知识库书面表达之间的措辞落差导致的召回不足
-    results, top_score = await rag_fusion_search(query, top_k=3)
+    # 先用最便宜的单次检索探路——大多数"明显能查到"或"明显不沾边"的问题，
+    # 到这一步就能定案，不用再多付一次改写 LLM 调用 + 3 次额外向量检索的成本
+    # （比如问跑步消耗多少卡路里这种跟心理健康知识库完全不沾边的问题，
+    # 之前会白跑一整套 RAG Fusion 才判断出该 fallback，拖慢了响应）。
+    results, top_score = await rag_search(query, top_k=3)
+
+    if RAG_FUSION_MIN_SCORE <= top_score < RAG_THRESHOLD:
+        # 分数落在模糊地带——不算查到，但也没明显到可以直接放弃，
+        # 这时候才值得用 RAG Fusion 的改写+多路召回再争取一次。
+        results, top_score = await rag_fusion_search(query, top_k=3)
 
     if top_score >= RAG_THRESHOLD:
         await log_lookup(

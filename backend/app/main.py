@@ -1,4 +1,17 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# 必须在其余任何东西之前执行：这个项目一直是靠 pydantic-settings 自己解析
+# .env（只灌进 Settings 对象，不碰 os.environ），像 LangSmith 这种直接读
+# os.environ["LANGSMITH_TRACING"] 之类系统环境变量的三方 SDK 根本读不到
+# .env 里的值。这里显式把 .env 加载进 os.environ，两边都能用。
+# 用 __file__ 算路径而不是让 load_dotenv() 自己从当前工作目录往上找——
+# 跟 app/config.py 里 _ENV_FILE 的算法保持一致，不会因为 uvicorn 从哪个
+# 目录启动而找错文件。
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

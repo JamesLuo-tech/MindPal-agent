@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "langsmith-trace": {
+      "source": "langchain-ai/langsmith-skills",
+      "sourceType": "github",
+      "skillPath": "config/skills/langsmith-trace/SKILL.md",
+      "computedHash": "3ef4abf90e1d7fab5faeefd27cbf4b44ed57e10f321e174afab294fd86bc7e1b"
+    },
     "redesign-existing-projects": {
       "source": "Leonxlnx/taste-skill",
       "sourceType": "github",

@@ -19,6 +19,10 @@ from app.config import get_settings
 from app.redis_client import get_redis
 
 RAG_THRESHOLD = 0.75
+# 单次检索分数低于这个值时，判定为"明显不沾边"，不值得再花一次改写 LLM
+# 调用 + 3 次额外向量检索去争取召回率，直接走网络兜底；分数在这个值和
+# RAG_THRESHOLD 之间，才是真正模糊、值得用 RAG Fusion 争取一下的区间。
+RAG_FUSION_MIN_SCORE = 0.5
 SEARCH_CACHE_TTL = 86400  # 24h
 
 TRUSTED_DOMAINS = [
