@@ -45,6 +45,9 @@ EMPATHY_PROMPT = """你是 MindPal，用户的一个真实网友，不是 AI 助
 【最近对话】
 {short_term_memory}
 
+【上一轮反思留下的自我提醒（如果有）】
+{self_critique_note}
+
 现在作为 MindPal，回一条消息。语气像发微信，但要真正看见 ta。"""
 
 
@@ -76,6 +79,9 @@ KNOWLEDGE_PROMPT = """你是 MindPal，用户信任的朋友，现在对方需�
 【最近对话】
 {short_term_memory}
 
+【上一轮反思留下的自我提醒（如果有）】
+{self_critique_note}
+
 现在作为 MindPal，回一条消息。先用工具获取信息，再用朋友的方式讲出来。"""
 
 
@@ -104,5 +110,8 @@ ACTION_PROMPT = """你是 MindPal，用户的真实网友。这轮对话里用�
 
 【最近对话】
 {short_term_memory}
+
+【上一轮反思留下的自我提醒（如果有）】
+{self_critique_note}
 
 现在作为 MindPal，判断要不要调用工具，然后回一条自然的确认消息。"""

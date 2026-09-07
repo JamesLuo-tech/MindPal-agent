@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Copy, Check } from 'lucide-react'
-import { fetchAppointmentSummary, type AppointmentSummaryOut } from '../../api/client'
+import { Copy, Check, Download } from 'lucide-react'
+import { fetchAppointmentSummary, fetchAppointmentSummaryPdf, type AppointmentSummaryOut } from '../../api/client'
 
 const DAY_OPTIONS = [
   { label: '过去 7 天', value: 7 },
@@ -23,6 +23,7 @@ export default function AppointmentSummaryView() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
 
   async function handleGenerate() {
     setLoading(true)
@@ -43,6 +44,24 @@ export default function AppointmentSummaryView() {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     })
+  }
+
+  async function handleDownloadPdf() {
+    setDownloadingPdf(true)
+    setError('')
+    try {
+      const blob = await fetchAppointmentSummaryPdf(days, discussTopics.trim() || undefined)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'mindpal-appointment-summary.pdf'
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (e: any) {
+      setError(e.message || 'PDF 生成失败，请稍后再试')
+    } finally {
+      setDownloadingPdf(false)
+    }
   }
 
   return (
@@ -101,13 +120,23 @@ export default function AppointmentSummaryView() {
           <div className="bg-paper-surface rounded-2xl border border-paper-sunk/60 overflow-hidden">
             <div className="flex items-center justify-between px-5 py-3 border-b border-paper-sunk">
               <p className="font-display text-sm font-bold text-ink">问诊摘要</p>
-              <button
-                onClick={handleCopy}
-                title="复制到剪贴板"
-                className="w-8 h-8 flex items-center justify-center rounded-lg text-ink-soft hover:bg-paper-sunk hover:text-ink transition-colors"
-              >
-                {copied ? <Check className="w-4 h-4 text-sage-600" /> : <Copy className="w-4 h-4" />}
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={handleDownloadPdf}
+                  disabled={downloadingPdf}
+                  title="下载正式报告 PDF"
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-ink-soft hover:bg-paper-sunk hover:text-ink transition-colors disabled:opacity-50"
+                >
+                  <Download className={`w-4 h-4 ${downloadingPdf ? 'animate-pulse' : ''}`} />
+                </button>
+                <button
+                  onClick={handleCopy}
+                  title="复制到剪贴板"
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-ink-soft hover:bg-paper-sunk hover:text-ink transition-colors"
+                >
+                  {copied ? <Check className="w-4 h-4 text-sage-600" /> : <Copy className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             <div className="px-5 py-4">

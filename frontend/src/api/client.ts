@@ -363,3 +363,18 @@ export function fetchAppointmentSummary(days: number, discussTopics?: string) {
     body: JSON.stringify({ days, discuss_topics: discussTopics || null }),
   })
 }
+
+/** 返回正式报告样式的 PDF 二进制内容——跟 apiFetch 不一样，响应体不是 JSON，
+ * 不能走 apiFetch<T>()（它内部固定调用 res.json()）。 */
+export async function fetchAppointmentSummaryPdf(days: number, discussTopics?: string): Promise<Blob> {
+  const headers = await getAuthHeaders()
+  const res = await fetch(`${BASE_URL}/api/reports/appointment-summary/pdf`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ days, discuss_topics: discussTopics || null }),
+  })
+  if (!res.ok) {
+    throw new Error(await extractErrorMessage(res))
+  }
+  return res.blob()
+}

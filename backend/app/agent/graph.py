@@ -58,6 +58,7 @@ class AgentState(TypedDict):
     intent_segments: list[IntentSegment]  # router 拆出来的意图段，绝大多数情况下长度为 1
     segment_responses: Annotated[list[dict], operator.add]  # run_segment 各分支并发累加的回答
     current_segment: IntentSegment  # 只有被 Send 派发到 run_segment 的那次调用才会带这个字段
+    self_critique_note: str  # 上一轮反思留下的自我提醒，chat_service 从 Redis 读出来传入，没有就是空字符串
 
 
 _ROUTER_HISTORY_TURNS = 3  # 只取最近几轮：分类这一步每条用户消息都要过一次，prompt 要小而快
@@ -208,6 +209,7 @@ async def empathy_agent_node(state: AgentState) -> dict:
     system_content = EMPATHY_PROMPT.format(
         long_term_memory=state.get("long_term_memory") or "（暂无档案）",
         short_term_memory="（已包含在对话历史中）",
+        self_critique_note=state.get("self_critique_note") or "（暂无）",
     )
     if state.get("crisis_triggered"):
         system_content += _CRISIS_SAFETY_PLAN_HINT
@@ -222,6 +224,7 @@ async def knowledge_agent_node(state: AgentState) -> dict:
     system_content = KNOWLEDGE_PROMPT.format(
         long_term_memory=state.get("long_term_memory") or "（暂无档案）",
         short_term_memory="（已包含在对话历史中）",
+        self_critique_note=state.get("self_critique_note") or "（暂无）",
     )
     response = await _get_llm_with_tools().ainvoke(
         [SystemMessage(content=system_content)] + list(state["messages"])
@@ -234,6 +237,7 @@ async def action_agent_node(state: AgentState) -> dict:
     system_content = ACTION_PROMPT.format(
         long_term_memory=state.get("long_term_memory") or "（暂无档案）",
         short_term_memory="（已包含在对话历史中）",
+        self_critique_note=state.get("self_critique_note") or "（暂无）",
     )
     response = await _get_llm_with_action_tools().ainvoke(
         [SystemMessage(content=system_content)] + list(state["messages"])
@@ -282,6 +286,7 @@ async def run_segment_node(state: AgentState) -> dict:
     system_content = _SEGMENT_PROMPTS[agent_type].format(
         long_term_memory=state.get("long_term_memory") or "（暂无档案）",
         short_term_memory="（已包含在对话历史中）",
+        self_critique_note=state.get("self_critique_note") or "（暂无）",
     )
     # 本地历史：用真实对话历史做上下文，但把"当前要处理的问题"换成这一段的文字，
     # 而不是整句原话——这样 LLM 既看得到上下文，又只需要回应这一段对应的意图。

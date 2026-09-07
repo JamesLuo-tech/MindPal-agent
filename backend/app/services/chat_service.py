@@ -17,11 +17,14 @@ from app.agent.graph import get_graph
 from app.agent.llm import get_llm
 from app.agent.memory import (
     load_long_term,
+    load_reflection_note,
     load_safety_plan,
     load_short_term,
     save_memory,
+    save_reflection_note,
     save_short_term,
 )
+from app.agent.reflection import reflect_on_turn
 
 RATE_LIMIT_WINDOW = 60
 RATE_LIMIT_MAX = 30
@@ -112,6 +115,13 @@ async def stream_chat(
         print(f"[WARN] 加载长时记忆失败: {e}")
         long_term = ""
 
+    # 上一轮反思留下的自我提醒（如果有）——读失败不影响主流程，当没有处理
+    try:
+        self_critique_note = await load_reflection_note(user_id, session_id, redis)
+    except Exception as e:
+        print(f"[WARN] 加载反思笔记失败: {e}")
+        self_critique_note = ""
+
     # 命中危机关键词时，把用户自己写过的安全计划一并给 Agent 参考，
     # 让回应能落到"你安全计划里写的那个方法，要不要现在试试"这种具体程度，
     # 而不是每轮对话都带上（避免闲聊时被突兀地提起）
@@ -138,6 +148,9 @@ async def stream_chat(
         "long_term_memory": long_term,
         "crisis_triggered": False,
         "agent_type": "",
+        "intent_segments": [],
+        "segment_responses": [],
+        "self_critique_note": self_critique_note,
     }
     graph_config = {"configurable": {"user_id": str(user_id)}}
 
@@ -145,6 +158,7 @@ async def stream_chat(
     graph = await get_graph()
     full_response = ""
     used_tools: list[str] = []
+    segment_drafts: list[dict] | None = None  # 只有多意图这轮才会被填上，供反思检查完整性用
 
     try:
         async for event in graph.astream_events(graph_input, config=graph_config, version="v2"):
@@ -158,6 +172,13 @@ async def stream_chat(
                 if chunk.content:
                     full_response += chunk.content
                     yield _sse("message", {"delta": chunk.content})
+
+            elif kind == "on_chain_start" and event.get("name") == "merge":
+                # merge 节点收到的 input 里带着所有并发分支已经合并进 segment_responses
+                # 的原始草稿——只有多意图（>=2 段）时才会真的走到这个节点。
+                drafts = event["data"].get("input", {}).get("segment_responses")
+                if drafts and len(drafts) > 1:
+                    segment_drafts = drafts
 
             elif kind == "on_tool_start":
                 tool_name = event["name"]
@@ -225,6 +246,14 @@ async def stream_chat(
             _emotion_background(user_id, message_id, user_message, full_response)
         )
 
+    # [9.5] 反思（后台）——不影响这一轮已经发出去的回复，优化的是"下一轮"。
+    # 跟情绪提取同一种模式：这一轮的 SSE 已经走完了，起个不等待的后台任务。
+    asyncio.create_task(
+        _reflection_background(
+            user_id, session_id, user_message, final_response, crisis_triggered, segment_drafts, redis,
+        )
+    )
+
     # [10] 完成
     yield _sse("done", {
         "message_id": str(message_id) if message_id else "",
@@ -245,6 +274,24 @@ async def _emotion_background(
         emotion = await extract_emotion(user_message, ai_response, get_llm())
         async with pool.acquire() as conn:
             await save_emotion(user_id, message_id, emotion, conn)
+    except Exception:
+        pass
+
+
+async def _reflection_background(
+    user_id: UUID,
+    session_id: str,
+    user_message: str,
+    final_response: str,
+    crisis_triggered: bool,
+    segment_drafts: list[dict] | None,
+    redis: aioredis.Redis,
+) -> None:
+    """跑一次反思，把结论（如果有）存进 Redis 给下一轮读。失败静默——
+    反思本来就是锦上添花的东西，不能因为它出错影响任何主流程。"""
+    try:
+        note = await reflect_on_turn(user_message, final_response, crisis_triggered, segment_drafts, get_llm())
+        await save_reflection_note(user_id, session_id, note or "", redis)
     except Exception:
         pass
 

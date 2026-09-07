@@ -48,6 +48,29 @@ async def save_short_term(
     await pipe.execute()
 
 
+def _reflection_key(user_id: UUID, session_id: str) -> str:
+    return f"reflect:{user_id}:{session_id}"
+
+
+async def load_reflection_note(user_id: UUID, session_id: str, redis: aioredis.Redis) -> str:
+    """读取上一轮反思留下的自我提醒（如果有）。跟短期记忆同一个生命周期——
+    只对"接下来几轮"有意义，不是永久记忆，所以只存最新一条、覆盖写，
+    不像短期记忆那样按列表累加。"""
+    key = _reflection_key(user_id, session_id)
+    note = await redis.get(key)
+    return note or ""
+
+
+async def save_reflection_note(user_id: UUID, session_id: str, note: str, redis: aioredis.Redis) -> None:
+    """覆盖写入这轮反思的结论；note 为空字符串时清空（表示这轮没发现问题，
+    不该让上一条旧笔记继续影响后面的对话）。"""
+    key = _reflection_key(user_id, session_id)
+    if not note:
+        await redis.delete(key)
+        return
+    await redis.set(key, note, ex=SHORT_TERM_TTL)
+
+
 async def load_long_term(user_id: UUID, pool: asyncpg.Pool) -> str:
     """从 PostgreSQL 加载用户档案和关键事件，拼成 SystemPrompt 使用的文本。"""
     async with pool.acquire() as db:

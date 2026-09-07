@@ -6,6 +6,7 @@ import * as client from '../../api/client'
 
 vi.mock('../../api/client', () => ({
   fetchAppointmentSummary: vi.fn(),
+  fetchAppointmentSummaryPdf: vi.fn(),
 }))
 
 const RESULT = {
@@ -97,5 +98,50 @@ describe('AppointmentSummaryView', () => {
       expect.stringContaining('想重点讨论：注意力下降和持续疲惫'),
     )
     expect(await screen.findByTitle('复制到剪贴板')).toBeInTheDocument() // 复制完按钮还在，只是图标换成了对勾
+  })
+
+  it('downloads the PDF report with the selected days and discuss topics', async () => {
+    vi.mocked(client.fetchAppointmentSummary).mockResolvedValue(RESULT)
+    const pdfBlob = new Blob(['fake pdf content'], { type: 'application/pdf' })
+    vi.mocked(client.fetchAppointmentSummaryPdf).mockResolvedValue(pdfBlob)
+
+    // jsdom 不实现 URL.createObjectURL/revokeObjectURL，本地打个桩，
+    // 顺便验证下载真的走了"生成临时链接→点击→回收"这条路径。
+    const createObjectURL = vi.fn().mockReturnValue('blob:fake-url')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    const user = userEvent.setup()
+    render(<AppointmentSummaryView />)
+
+    await user.click(screen.getByText('过去 30 天'))
+    await user.type(screen.getByPlaceholderText('比如：注意力下降、持续疲惫'), '注意力下降')
+    await user.click(screen.getByText('生成问诊摘要'))
+    await screen.findByText('问诊摘要')
+
+    await user.click(screen.getByTitle('下载正式报告 PDF'))
+
+    expect(client.fetchAppointmentSummaryPdf).toHaveBeenCalledWith(30, '注意力下降')
+    expect(createObjectURL).toHaveBeenCalledWith(pdfBlob)
+    expect(clickSpy).toHaveBeenCalled()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:fake-url')
+
+    clickSpy.mockRestore()
+    vi.unstubAllGlobals()
+  })
+
+  it('shows an error message when PDF download fails', async () => {
+    vi.mocked(client.fetchAppointmentSummary).mockResolvedValue(RESULT)
+    vi.mocked(client.fetchAppointmentSummaryPdf).mockRejectedValue(new Error('PDF 生成失败，请稍后再试'))
+    const user = userEvent.setup()
+    render(<AppointmentSummaryView />)
+
+    await user.click(screen.getByText('生成问诊摘要'))
+    await screen.findByText('问诊摘要')
+
+    await user.click(screen.getByTitle('下载正式报告 PDF'))
+
+    expect(await screen.findByText('PDF 生成失败，请稍后再试')).toBeInTheDocument()
   })
 })

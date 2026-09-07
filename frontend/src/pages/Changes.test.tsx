@@ -10,6 +10,7 @@ vi.mock('../api/client', () => ({
   fetchEmotions: vi.fn(),
   fetchWeeklyReport: vi.fn(),
   fetchAppointmentSummary: vi.fn(),
+  fetchAppointmentSummaryPdf: vi.fn(),
 }))
 
 const REPORT: WeeklyReportOut = {
