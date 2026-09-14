@@ -11,6 +11,7 @@ from app.agent.rag import (
     RAG_FUSION_MIN_SCORE,
     RAG_THRESHOLD,
     format_rag_results,
+    grade_relevance,
     log_lookup,
     rag_fusion_search,
     rag_search,
@@ -47,13 +48,23 @@ async def lookup(query: str) -> str:
         results, top_score = await rag_fusion_search(query, top_k=3)
 
     if top_score >= RAG_THRESHOLD:
-        await log_lookup(
-            query,
-            source="rag",
-            rag_top_score=top_score,
-            hit_kb_id=str(results[0]["id"]) if results else None,
+        # cosine 分数高只说明"语义邻居"，不代表这条资料真的答得了用户的
+        # 问题——embedding 容易把同一话题域的句子放得很近。这里再让 LLM
+        # 判一遍 relevance，两道关卡（retrieval score + relevance score）
+        # 都过了才真正当作"查到了"直接返回，不再只依赖 cosine 相似度。
+        relevant = await grade_relevance(query, results)
+        if relevant:
+            await log_lookup(
+                query,
+                source="rag",
+                rag_top_score=top_score,
+                hit_kb_id=str(relevant[0]["id"]),
+            )
+            return format_rag_results(relevant)
+        logger.info(
+            "[lookup] cosine=%.3f 达标但 relevance grader 判定都答不了问题，转网络兜底 | query=%s",
+            top_score, query,
         )
-        return format_rag_results(results)
 
     await log_lookup(query, source="web", rag_top_score=top_score)
     return await web_search(query)

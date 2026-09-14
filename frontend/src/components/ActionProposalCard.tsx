@@ -16,7 +16,7 @@ export default function ActionProposalCard({ proposal }: { proposal: ActionPropo
   async function handleConfirm() {
     setStatus('saving')
     try {
-      await confirmAction(proposal.action, proposal.params)
+      await confirmAction(proposal.proposalId)
       setStatus('saved')
       setTimeout(() => setPendingProposal(null), 1200)
     } catch (e: any) {

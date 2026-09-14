@@ -340,11 +340,13 @@ export interface ActionConfirmResult {
   result: Record<string, unknown>
 }
 
-/** 用户在确认卡片上点了"确认"后调用——真正的数据库写入只在这一步发生 */
-export function confirmAction(action: string, params: Record<string, unknown>) {
+/** 用户在确认卡片上点了"确认"后调用——真正的数据库写入只在这一步发生。
+ * 只传 proposalId，不再传 action/params：后端会从服务端存的提议记录里
+ * 取这两项，不信任客户端重新传回来的值（防篡改）。 */
+export function confirmAction(proposalId: string) {
   return apiFetch<ActionConfirmResult>('/api/chat/actions/confirm', {
     method: 'POST',
-    body: JSON.stringify({ action, params }),
+    body: JSON.stringify({ proposal_id: proposalId }),
   })
 }
 

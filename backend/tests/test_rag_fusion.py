@@ -10,7 +10,10 @@ import pytest
 
 from app.agent.rag import (
     _reciprocal_rank_fusion,
+    build_relevance_grade_prompt,
     generate_query_variants,
+    grade_relevance,
+    parse_relevance_grades,
     rag_fusion_search,
 )
 
@@ -153,3 +156,83 @@ async def test_rag_fusion_search_returns_empty_when_nothing_found():
 
     assert fused == []
     assert top_score == 0.0
+
+
+# ---------------------------------------------------------------------------
+# build_relevance_grade_prompt
+# ---------------------------------------------------------------------------
+
+
+def test_build_relevance_grade_prompt_includes_query_and_all_candidates():
+    results = [
+        {"title": "失眠的成因", "content": "内容A"},
+        {"title": "SSRI 是什么", "content": "内容B"},
+    ]
+    prompt = build_relevance_grade_prompt("SSRI 有哪些副作用", results)
+    assert "SSRI 有哪些副作用" in prompt
+    assert "内容A" in prompt
+    assert "内容B" in prompt
+    assert "[1]" in prompt and "[2]" in prompt
+    assert "拿不准就算不能" in prompt  # 保守标准的指令必须在
+
+
+# ---------------------------------------------------------------------------
+# parse_relevance_grades
+# ---------------------------------------------------------------------------
+
+
+def test_parse_relevance_grades_reads_yes_and_no():
+    content = "1: 能\n2: 不能\n3: 能"
+    assert parse_relevance_grades(content, 3) == [True, False, True]
+
+
+def test_parse_relevance_grades_handles_chinese_colon():
+    content = "1：能\n2：不能"
+    assert parse_relevance_grades(content, 2) == [True, False]
+
+
+def test_parse_relevance_grades_defaults_missing_lines_to_false():
+    """保守默认：LLM 漏判某一条时，不能默认放行，得当"不能"处理。"""
+    content = "1: 能"
+    assert parse_relevance_grades(content, 3) == [True, False, False]
+
+
+def test_parse_relevance_grades_defaults_to_false_on_garbage():
+    assert parse_relevance_grades("完全不按格式来的一段话", 2) == [False, False]
+
+
+def test_parse_relevance_grades_ignores_out_of_range_index():
+    content = "1: 能\n5: 能"  # 5 超出范围，应该被忽略而不是报错
+    assert parse_relevance_grades(content, 2) == [True, False]
+
+
+# ---------------------------------------------------------------------------
+# grade_relevance —— 整条编排（mock LLM）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_grade_relevance_filters_out_rejected_candidates():
+    results = [
+        {"id": "a", "title": "真正相关", "content": "答案在这里"},
+        {"id": "b", "title": "语义邻居但答不了", "content": "跑题内容"},
+    ]
+    mock_response = AsyncMock()
+    mock_response.content = "1: 能\n2: 不能"
+
+    with patch("app.agent.llm.get_llm") as mock_get_llm:
+        mock_llm = AsyncMock()
+        mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+        mock_get_llm.return_value = mock_llm
+        relevant = await grade_relevance("问题", results)
+
+    assert relevant == [results[0]]
+
+
+@pytest.mark.asyncio
+async def test_grade_relevance_returns_empty_list_without_calling_llm_when_no_candidates():
+    with patch("app.agent.llm.get_llm") as mock_get_llm:
+        relevant = await grade_relevance("问题", [])
+
+    assert relevant == []
+    mock_get_llm.assert_not_called()  # 没有候选就不用浪费一次 LLM 调用

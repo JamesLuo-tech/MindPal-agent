@@ -4,18 +4,24 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import AsyncGenerator
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import redis.asyncio as aioredis
 from langchain_core.messages import AIMessage, HumanMessage
 
 import app.database as _db
 from app.agent.actions import ACTION_TOOL_NAMES
-from app.agent.crisis import CRITICAL_KEYWORDS, HOTLINE_APPEND, check_and_append_hotline
+from app.agent.crisis import (
+    CRITICAL_KEYWORDS,
+    HOTLINE_APPEND,
+    check_and_append_hotline,
+    save_crisis_event,
+)
 from app.agent.emotion import extract_emotion, save_emotion
 from app.agent.graph import get_graph
 from app.agent.llm import get_llm
 from app.agent.memory import (
+    increment_turn_count,
     load_long_term,
     load_reflection_note,
     load_safety_plan,
@@ -24,7 +30,9 @@ from app.agent.memory import (
     save_reflection_note,
     save_short_term,
 )
+from app.agent.profile_extraction import extract_profile_info, save_key_event, save_profile_updates
 from app.agent.reflection import reflect_on_turn
+from app.services.action_proposal_service import create_proposal
 
 RATE_LIMIT_WINDOW = 60
 RATE_LIMIT_MAX = 30
@@ -194,18 +202,31 @@ async def stream_chat(
                 tool_name = event["name"]
                 yield _sse("tool_result", {"tool": tool_name, "status": "done"})
 
-                # propose_* 工具只生成了一条待确认的提议，转成 action_proposal 事件
-                # 推给前端弹确认卡片——真正的数据库写入要等用户点确认后另外调接口。
+                # propose_* 工具只生成了一条待确认的提议，先真的写进
+                # action_proposals 表（拿到真实的数据库主键当 proposal_id），
+                # 再转成 action_proposal 事件推给前端弹确认卡片——确认接口
+                # 只认这个真实存在的 id，不再信任客户端重新传回来的 action/
+                # params。写入失败就不推这张卡片给用户，总比推一张点了会
+                # 404 的假卡片强。
                 proposal = parse_action_proposal(tool_name, event["data"].get("output"))
                 if proposal:
-                    yield _sse("action_proposal", {"proposal_id": str(uuid4()), **proposal})
+                    try:
+                        async with pool.acquire() as db:
+                            created = await create_proposal(
+                                user_id, conversation_id,
+                                proposal["action"], proposal["params"], proposal["summary"],
+                                db,
+                            )
+                        yield _sse("action_proposal", {"proposal_id": str(created["id"]), **proposal})
+                    except Exception as e:
+                        print(f"[WARN] 保存 action 提议失败: {e}")
 
     except Exception as e:
         yield _sse("error", {"code": "agent_error", "message": str(e)})
         return
 
     # [5] 危机检测
-    final_response, crisis_triggered = check_and_append_hotline(user_message, full_response)
+    final_response, crisis_triggered, matched_keyword = check_and_append_hotline(user_message, full_response)
     if crisis_triggered:
         yield _sse("message", {"delta": HOTLINE_APPEND})
 
@@ -217,6 +238,14 @@ async def stream_chat(
         )
     except Exception as e:
         print(f"[WARN] 保存消息失败: {e}")
+
+    # [6.5] 危机事件审计日志（独立连接）——只有真的命中才写，不是每轮都写
+    if crisis_triggered and matched_keyword:
+        try:
+            async with pool.acquire() as db:
+                await save_crisis_event(user_id, message_id, matched_keyword, db)
+        except Exception as e:
+            print(f"[WARN] 记录危机事件失败: {e}")
 
     # [7] 更新短时记忆
     try:
@@ -231,9 +260,11 @@ async def stream_chat(
     except Exception as e:
         print(f"[WARN] 更新短时记忆失败: {e}")
 
-    # [8] 向量记忆（独立连接）
+    # [8] 向量记忆（独立连接）——用独立的总轮数计数器判断要不要存，不能再用
+    # len(short_term) 算：短期记忆最多保留最近 10 轮，超过之后 len(short_term)
+    # 会卡在容量上限，"每 5 轮存一次"这个判断永远不会再等于整除。
     try:
-        turn_count = len(short_term) // 2 + 1
+        turn_count = await increment_turn_count(user_id, session_id, redis)
         if turn_count % MEMORY_SAVE_INTERVAL == 0:
             summary = f"用户：{user_message[:120]}\nMindPal：{final_response[:240]}"
             await save_memory(user_id, summary, pool)
@@ -245,6 +276,13 @@ async def stream_chat(
         asyncio.create_task(
             _emotion_background(user_id, message_id, user_message, full_response)
         )
+
+    # [9.4] 用户资料/重要事件提取（后台）——被动提取，不需要用户确认，
+    # 写的是低风险的个性化信息（昵称/年龄段/诊断/重要事件），不是会触发
+    # 行为的写入动作，跟 propose_* 那套"提议-确认"工具是两条不同的路径。
+    asyncio.create_task(
+        _profile_background(user_id, user_message, full_response)
+    )
 
     # [9.5] 反思（后台）——不影响这一轮已经发出去的回复，优化的是"下一轮"。
     # 跟情绪提取同一种模式：这一轮的 SSE 已经走完了，起个不等待的后台任务。
@@ -274,6 +312,27 @@ async def _emotion_background(
         emotion = await extract_emotion(user_message, ai_response, get_llm())
         async with pool.acquire() as conn:
             await save_emotion(user_id, message_id, emotion, conn)
+    except Exception:
+        pass
+
+
+async def _profile_background(
+    user_id: UUID,
+    user_message: str,
+    ai_response: str,
+) -> None:
+    """跑一次用户资料/重要事件提取，把结果（如果有）写进 user_profiles/
+    key_events。失败静默——这是锦上添花的个性化信息，不能因为它出错
+    影响主流程。"""
+    pool = _db._pool
+    if pool is None:
+        return
+    try:
+        result = await extract_profile_info(user_message, ai_response, get_llm())
+        async with pool.acquire() as conn:
+            await save_profile_updates(user_id, result, conn)
+            if result.get("key_event"):
+                await save_key_event(user_id, result["key_event"], conn)
     except Exception:
         pass
 

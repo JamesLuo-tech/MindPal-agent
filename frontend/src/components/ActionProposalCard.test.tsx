@@ -32,14 +32,17 @@ describe('ActionProposalCard', () => {
     expect(screen.getByText('取消')).toBeInTheDocument()
   })
 
-  it('calls confirmAction with the exact action and params on confirm', async () => {
+  it('calls confirmAction with only the proposal id on confirm', async () => {
     vi.mocked(client.confirmAction).mockResolvedValue({ action: 'create_micro_action', result: {} })
     const user = userEvent.setup()
     render(<ActionProposalCard proposal={PROPOSAL} />)
 
     await user.click(screen.getByText('确认'))
 
-    expect(client.confirmAction).toHaveBeenCalledWith('create_micro_action', PROPOSAL.params)
+    // 只传 proposalId 这一个参数，不再把 action/params 从前端传回去——
+    // 这两项现在由后端从服务端存的提议记录里取，前端传回去也不会被信任。
+    expect(client.confirmAction).toHaveBeenCalledWith('p1')
+    expect(vi.mocked(client.confirmAction).mock.calls[0]).toHaveLength(1)
     expect(await screen.findByText('已保存 ✓')).toBeInTheDocument()
   })
 

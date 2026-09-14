@@ -48,6 +48,33 @@ async def save_short_term(
     await pipe.execute()
 
 
+def _turn_count_key(user_id: UUID, session_id: str) -> str:
+    return f"turncount:{user_id}:{session_id}"
+
+
+async def increment_turn_count(user_id: UUID, session_id: str, redis: aioredis.Redis) -> int:
+    """给这个对话累加一个只增不减的总轮数计数器，返回递增后的值。
+
+    之前 chat_service.py 用 len(short_term)//2+1 算轮数，但 short_term 是
+    从 Redis 读出来的短期记忆列表，save_short_term 会用 ltrim 把它裁到最多
+    保留最近 SHORT_TERM_MAX_TURNS 轮（_MAX_MESSAGES 条消息）。一旦对话超过
+    这个轮数，len(short_term) 就会永远卡在上限值，算出来的"轮数"也跟着
+    卡死在同一个数字上——"每 N 轮存一次向量记忆"这个判断从此再也不会
+    等于整除，永远不会再触发。这里单独维护一个不受短期记忆容量上限影响、
+    只增不减的计数器来代替那个算法。
+
+    TTL 跟短期记忆用同一个值、且每次调用都刷新（滑动窗口），语义上保持
+    一致——短期记忆本身长期不活跃也会过期清空，"这个对话进行到第几轮"
+    这个概念跟着一起失效是合理的，不是新引入的不一致。
+    """
+    key = _turn_count_key(user_id, session_id)
+    pipe = redis.pipeline()
+    pipe.incr(key)
+    pipe.expire(key, SHORT_TERM_TTL)
+    results = await pipe.execute()
+    return results[0]
+
+
 def _reflection_key(user_id: UUID, session_id: str) -> str:
     return f"reflect:{user_id}:{session_id}"
 
