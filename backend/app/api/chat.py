@@ -9,7 +9,7 @@ from uuid import UUID
 
 import asyncpg
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.auth import get_current_user_id
@@ -104,6 +104,7 @@ async def list_messages(
 @router.post("/chat")
 async def chat(
     body: ChatRequest,
+    request: Request,
     user_id: UUID = Depends(get_current_user_id),
     redis: aioredis.Redis = Depends(get_redis),
 ):
@@ -115,9 +116,14 @@ async def chat(
       event: message     data: {"delta": "..."}
       event: done        data: {"message_id": "...", "crisis_triggered": false}
       event: error       data: {"code": "...", "message": "..."}
+
+    把 request 传给 stream_chat，用来检测客户端是否还连着——用户中途关掉
+    页面、切换会话，或者前端调用 AbortController 主动停止生成（这两种在
+    服务端看来是同一件事：request 断开了），都要能让还没跑完的检索/搜索/
+    LLM 生成尽快停下来，不然这些任务会继续占用资源直到自然跑完。
     """
     return StreamingResponse(
-        stream_chat(user_id, body.conversation_id, body.message, redis),
+        stream_chat(user_id, body.conversation_id, body.message, redis, request),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

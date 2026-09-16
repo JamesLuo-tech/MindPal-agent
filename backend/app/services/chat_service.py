@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from typing import AsyncGenerator
 from uuid import UUID
 
 import redis.asyncio as aioredis
+from fastapi import Request
 from langchain_core.messages import AIMessage, HumanMessage
 
 import app.database as _db
@@ -37,6 +39,10 @@ from app.services.action_proposal_service import create_proposal
 RATE_LIMIT_WINDOW = 60
 RATE_LIMIT_MAX = 30
 MEMORY_SAVE_INTERVAL = 5
+# 轮询 request.is_disconnected() 的间隔——不用数据库连接池的状态判断客户端
+# 是否还在（连接池跟 HTTP 连接是两回事，池子健康不代表这个具体请求的
+# 客户端还连着），直接问 FastAPI 的 Request 对象最准确、也是官方推荐的做法。
+DISCONNECT_POLL_INTERVAL = 0.5
 
 
 def _sse(event: str, data: dict) -> str:
@@ -92,17 +98,128 @@ async def _check_rate_limit(user_id: UUID, redis: aioredis.Redis) -> bool:
     return count <= RATE_LIMIT_MAX
 
 
+async def _watch_disconnect(request: Request, gen_task: asyncio.Task) -> None:
+    """轮询 request.is_disconnected()；一旦客户端断开（真的断网，或者前端
+    AbortController 主动停止生成——这两种在服务端看来是同一件事），直接
+    cancel 掉 gen_task。
+
+    只需要 cancel 这一个 task：gen_task 内部是 `async for event in
+    graph.astream_events(...)`，取消这一个 Task 会被 asyncio 自动级联传播
+    到它当前正在 await 的所有子调用——不管此刻卡在 pgvector 检索、
+    run_in_executor 里跑的 SerpAPI 调用，还是 LLM 的流式请求，都不用
+    分别给 retrieval/SerpAPI/LLM 各起一个 task handle 手动去 cancel。
+
+    gen_task 自然跑完时这个循环也会自己退出，不依赖外面显式 cancel 它。
+    """
+    try:
+        while not gen_task.done():
+            try:
+                if await request.is_disconnected():
+                    gen_task.cancel()
+                    return
+            except Exception as e:
+                # is_disconnected() 本身出错是极少见的情况——保守起见当成
+                # "还连着"处理，不能因为探测本身出错就误杀正常请求。
+                print(f"[WARN] 检测客户端连接状态失败: {e}")
+            await asyncio.sleep(DISCONNECT_POLL_INTERVAL)
+    except asyncio.CancelledError:
+        pass
+
+
+async def _run_graph_events(
+    graph,
+    graph_input: dict,
+    graph_config: dict,
+    pool,
+    user_id: UUID,
+    conversation_id: UUID,
+    queue: "asyncio.Queue[str | None]",
+    result: dict,
+) -> None:
+    """真正跑 LangGraph 流式推理的任务体——retrieval（lookup 工具里的
+    pgvector 检索）、SerpAPI 实时搜索、LLM 生成全部发生在这个任务的调用链
+    里，整个函数会被包成一个独立的 asyncio.Task，好让 _watch_disconnect
+    能整体 cancel 掉它（见上面的说明）。
+
+    这里没法像原来那样直接 yield SSE 字符串给调用方（Task 没有"边跑边
+    yield"给外部生成器的机制），所以改成往 queue 里 put；处理到的
+    full_response/used_tools/segment_drafts 通过外面传进来的 result 字典
+    原地更新带出去。跑完（不管正常结束、内部出错、还是被 cancel）最后都
+    会往 queue 里放一个 None 当结束哨兵，让外层消费循环知道该收尾了。
+    """
+    try:
+        async for event in graph.astream_events(graph_input, config=graph_config, version="v2"):
+            kind = event["event"]
+
+            if kind == "on_chat_model_stream":
+                node_name = event.get("metadata", {}).get("langgraph_node")
+                if not should_forward_chat_stream(node_name):
+                    continue
+                chunk = event["data"]["chunk"]
+                if chunk.content:
+                    result["full_response"] += chunk.content
+                    await queue.put(_sse("message", {"delta": chunk.content}))
+
+            elif kind == "on_chain_start" and event.get("name") == "merge":
+                drafts = event["data"].get("input", {}).get("segment_responses")
+                if drafts and len(drafts) > 1:
+                    result["segment_drafts"] = drafts
+
+            elif kind == "on_tool_start":
+                tool_name = event["name"]
+                tool_input = event["data"].get("input", {})
+                result["used_tools"].append(tool_name)
+                await queue.put(_sse("tool_use", {
+                    "tool": tool_name,
+                    "query": tool_input.get("query", ""),
+                    "status": "searching",
+                }))
+
+            elif kind == "on_tool_end":
+                tool_name = event["name"]
+                await queue.put(_sse("tool_result", {"tool": tool_name, "status": "done"}))
+
+                proposal = parse_action_proposal(tool_name, event["data"].get("output"))
+                if proposal:
+                    try:
+                        async with pool.acquire() as db:
+                            created = await create_proposal(
+                                user_id, conversation_id,
+                                proposal["action"], proposal["params"], proposal["summary"],
+                                db,
+                            )
+                        await queue.put(_sse("action_proposal", {"proposal_id": str(created["id"]), **proposal}))
+                    except Exception as e:
+                        print(f"[WARN] 保存 action 提议失败: {e}")
+
+    except asyncio.CancelledError:
+        raise  # 不吞掉——外层要靠这个判断这一轮是不是被取消的，不能继续做持久化
+    except Exception as e:
+        await queue.put(_sse("error", {"code": "agent_error", "message": str(e)}))
+        result["error"] = True  # 内部真的出错了，外层要跟"被取消"一样放弃后续持久化
+    finally:
+        await queue.put(None)
+
+
 async def stream_chat(
     user_id: UUID,
     conversation_id: UUID,
     user_message: str,
     redis: aioredis.Redis,
+    request: Request,
 ) -> AsyncGenerator[str, None]:
     """主对话流程，yield SSE 格式字符串。
 
     每个 DB 操作都在独立的 pool.acquire() 块中完成，
     不跨越任何 yield 点持有连接，避免 asyncpg 在生成器暂停时
     将连接释放回连接池的问题。
+
+    request 用来检测客户端是否中途断开（或者前端主动停止生成——服务端
+    视角下这是同一件事）：不依赖数据库连接池的状态去猜，直接问
+    request.is_disconnected()。检测到断开就 cancel 掉正在跑的生成任务
+    （retrieval/SerpAPI/LLM 全部在这个任务的调用链里，cancel 一次就会
+    级联传播到底），并放弃这一轮的后续持久化——客户端已经不在了，没有
+    "完成一半"的消息值得存进历史记录里。
     """
     # [1] 限流
     if not await _check_rate_limit(user_id, redis):
@@ -162,68 +279,54 @@ async def stream_chat(
     }
     graph_config = {"configurable": {"user_id": str(user_id)}}
 
-    # [4] LangGraph 流式推理（此段跨越多个 yield，不持有 DB 连接）
+    # [4] LangGraph 流式推理——真正的检索/搜索/LLM 生成跑在一个独立的
+    # asyncio.Task 里（_run_graph_events），另有一个 _watch_disconnect 任务
+    # 轮询客户端是否还连着，断开就把生成任务整体 cancel 掉。这里的
+    # while 循环只是从 queue 里把生成任务 put 进来的 SSE 消息原样转发出去。
+    queue: asyncio.Queue[str | None] = asyncio.Queue()
+    result = {"full_response": "", "used_tools": [], "segment_drafts": None}
+
     graph = await get_graph()
-    full_response = ""
-    used_tools: list[str] = []
-    segment_drafts: list[dict] | None = None  # 只有多意图这轮才会被填上，供反思检查完整性用
+    gen_task = asyncio.create_task(
+        _run_graph_events(graph, graph_input, graph_config, pool, user_id, conversation_id, queue, result)
+    )
+    watcher_task = asyncio.create_task(_watch_disconnect(request, gen_task))
 
+    cancelled = False
     try:
-        async for event in graph.astream_events(graph_input, config=graph_config, version="v2"):
-            kind = event["event"]
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield item
+    finally:
+        watcher_task.cancel()
+        if not gen_task.done():
+            gen_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await gen_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await watcher_task
 
-            if kind == "on_chat_model_stream":
-                node_name = event.get("metadata", {}).get("langgraph_node")
-                if not should_forward_chat_stream(node_name):
-                    continue
-                chunk = event["data"]["chunk"]
-                if chunk.content:
-                    full_response += chunk.content
-                    yield _sse("message", {"delta": chunk.content})
+    if gen_task.cancelled():
+        cancelled = True
 
-            elif kind == "on_chain_start" and event.get("name") == "merge":
-                # merge 节点收到的 input 里带着所有并发分支已经合并进 segment_responses
-                # 的原始草稿——只有多意图（>=2 段）时才会真的走到这个节点。
-                drafts = event["data"].get("input", {}).get("segment_responses")
-                if drafts and len(drafts) > 1:
-                    segment_drafts = drafts
-
-            elif kind == "on_tool_start":
-                tool_name = event["name"]
-                tool_input = event["data"].get("input", {})
-                used_tools.append(tool_name)
-                yield _sse("tool_use", {
-                    "tool": tool_name,
-                    "query": tool_input.get("query", ""),
-                    "status": "searching",
-                })
-
-            elif kind == "on_tool_end":
-                tool_name = event["name"]
-                yield _sse("tool_result", {"tool": tool_name, "status": "done"})
-
-                # propose_* 工具只生成了一条待确认的提议，先真的写进
-                # action_proposals 表（拿到真实的数据库主键当 proposal_id），
-                # 再转成 action_proposal 事件推给前端弹确认卡片——确认接口
-                # 只认这个真实存在的 id，不再信任客户端重新传回来的 action/
-                # params。写入失败就不推这张卡片给用户，总比推一张点了会
-                # 404 的假卡片强。
-                proposal = parse_action_proposal(tool_name, event["data"].get("output"))
-                if proposal:
-                    try:
-                        async with pool.acquire() as db:
-                            created = await create_proposal(
-                                user_id, conversation_id,
-                                proposal["action"], proposal["params"], proposal["summary"],
-                                db,
-                            )
-                        yield _sse("action_proposal", {"proposal_id": str(created["id"]), **proposal})
-                    except Exception as e:
-                        print(f"[WARN] 保存 action 提议失败: {e}")
-
-    except Exception as e:
-        yield _sse("error", {"code": "agent_error", "message": str(e)})
+    if cancelled:
+        # 客户端已经不在了（真断开，或者主动点了停止），没有"生成到一半"
+        # 的内容值得存进对话历史——不做危机检测、不落库、不更新任何记忆、
+        # 也不起后台任务，安安静静地结束这个生成器。
+        print(f"[INFO] 客户端已断开/主动停止生成，放弃本轮后续处理 | user={user_id} conversation={conversation_id}")
         return
+
+    if result.get("error"):
+        # 跟原来的行为一致：agent_error 事件已经在上面的循环里转发给前端了，
+        # 内部真出错的这一轮直接结束，不继续做危机检测/持久化——那些步骤
+        # 依赖 full_response 是完整、可信的，出错之后的内容不满足这个前提。
+        return
+
+    full_response = result["full_response"]
+    used_tools = result["used_tools"]
+    segment_drafts = result["segment_drafts"]
 
     # [5] 危机检测
     final_response, crisis_triggered, matched_keyword = check_and_append_hotline(user_message, full_response)
