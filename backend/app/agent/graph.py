@@ -11,9 +11,17 @@
   action_tools    - 写入类工具执行节点（propose_* 系列，纯生成提议，无副作用）
   run_segment     - 多意图路径专用：处理 intent_segments 里的某一段，内部自带
                     工具调用循环（本地消息列表，不碰共享的 messages），只在
-                    intent_segments 长度 >= 2 时才会被 Send 并发调用
-  merge           - 多意图路径专用：把 run_segment 各分支的回答合成一条自然回复；
-                    只有一段时直接透传，不额外调 LLM
+                    intent_segments 长度 >= 2 时才会被 Send 并发调用。某一段
+                    失败时不让异常往外传播（Send 并发扇出里只要有一个分支
+                    抛异常，LangGraph 会把整个运行一起弄挂，连累其他已经
+                    成功的分支），而是内部捕获、按错误类型决定要不要退避
+                    重试，重试用尽/不值得重试就把这段标成 status=failed 交
+                    给 merge 处理——graceful degradation 优先于 fail-fast，
+                    只有全部分支都失败时才整体降级成一句抱歉。
+  merge           - 多意图路径专用：把 run_segment 各分支里 status=success 的
+                    回答合成一条自然回复，只有一段成功时直接透传、不额外调
+                    LLM；有分支失败会在后面附一句口语化的降级提示；全部
+                    失败则整体退化成一句抱歉，而不是让整轮变成系统报错
   crisis_check    - 危机关键词扫描，设置 crisis_triggered 标志
 
 边：
@@ -27,6 +35,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import operator
 import re
 from typing import Annotated, Sequence, TypedDict
@@ -259,6 +268,54 @@ async def action_agent_node(state: AgentState) -> dict:
 _SEGMENT_PROMPTS = {"empathy": EMPATHY_PROMPT, "knowledge": KNOWLEDGE_PROMPT, "action": ACTION_PROMPT}
 _SEGMENT_MAX_TOOL_ROUNDS = 3  # 防御性上限，避免工具调用死循环
 
+_SEGMENT_MAX_RETRIES = 2  # 可重试错误最多再试 2 次（加上第一次，最多跑 3 次）
+_SEGMENT_RETRY_BASE_DELAY = 0.5  # 指数退避的基数（秒）：0.5 / 1 / 2 ...
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+# action 段的工具调用（propose_* 系列）成功后，chat_service.py 的
+# on_tool_end 会立刻据此在 action_proposals 表里真的写一条待确认的提议——
+# 这是一个真实的外部副作用，不是纯只读操作。如果 action 段跑到一半失败
+# （比如第一轮工具调用已经成功生成了提议，第二轮拿最终文字时才超时），
+# 重试会让 propose_* 工具再被调一次，产生第二条重复的待确认提议卡片，
+# 这是用户能看到的真实 bug，不是"重试了也没关系"的无副作用重试。所以
+# action 段不参与重试，失败就直接标 failed；真正需要幂等保证的是"确认"
+# 这一步，已经在 action_proposal_service.py 里用行锁 + 事务做了。
+_SEGMENT_RETRYABLE_AGENT_TYPES = {"empathy", "knowledge"}
+
+
+def _is_retryable_error(exc: BaseException) -> bool:
+    """区分"值得退避重试"和"重试也没用"的错误。超时、限流（429）、部分
+    5xx 通常是瞬时的服务端/网络问题，重试有机会成功；参数错误、鉴权失败
+    这类是确定性错误，重试只会原样再失败一次，纯浪费时间和 token。
+
+    这里没有硬编码去 import 某个具体 SDK 的异常类（比如 openai 包的
+    RateLimitError）——不同 LLM/搜索 SDK 抛出的异常类型不一样，硬编码容易
+    漏掉，用"有没有 status_code 属性"+"类名里有没有这些关键词"做启发式
+    判断，覆盖面更广，代价是不追求 100% 精确。
+    """
+    status_code = getattr(exc, "status_code", None)
+    if status_code is None:
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+    if status_code in _RETRYABLE_STATUS_CODES:
+        return True
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return True
+    name = type(exc).__name__
+    return any(k in name for k in (
+        "Timeout", "RateLimit", "ServiceUnavailable", "InternalServerError", "ConnectError", "ConnectTimeout",
+    ))
+
+
+def _segment_failure_note(agent_type: str) -> str:
+    """某一段失败、且没有更多重试机会时，附在最终回复后面的口语化降级
+    提示——不是系统报错文案，语气跟其他 prompt 一样按朋友聊天的调子写，
+    让用户知道"这部分没成，但可以再试"，而不是一头雾水。"""
+    notes = {
+        "knowledge": "（对了，我刚才想帮你查点资料但没查到，可能是网络的问题，要不等会儿再问我一次？）",
+        "action": "（另外你提到的那件事，我这边记录的时候出了点小问题，要不你再说一次？）",
+        "empathy": "（这部分我这边没接住，要不再说一次？）",
+    }
+    return notes.get(agent_type, "（这部分我这边没处理好，要不再说一次？）")
+
 
 def _segment_llm(agent_type: str):
     if agent_type == "knowledge":
@@ -276,13 +333,12 @@ def _segment_tools_by_name(agent_type: str) -> dict:
     return {}
 
 
-async def run_segment_node(state: AgentState) -> dict:
-    """处理 intent_segments 里的某一段，独立跑完自己的工具调用循环（如果需要），
-    结果写进 segment_responses 累加，不直接进 messages。
+async def _run_segment_once(state: AgentState, agent_type: str, segment: IntentSegment) -> str:
+    """真正跑一次这一段的工具调用循环，返回最终文字。抛异常交给调用方
+    （run_segment_node）决定重试还是降级——这个函数本身不做任何容错，
+    每次重试都是从头跑一遍全新的 local_messages，不带上一次失败尝试里
+    已经产生的中间消息（避免把一次失败的工具调用历史喂给下一次尝试）。
     """
-    segment = state["current_segment"]
-    agent_type = segment["agent_type"]
-
     system_content = _SEGMENT_PROMPTS[agent_type].format(
         long_term_memory=state.get("long_term_memory") or "（暂无档案）",
         short_term_memory="（已包含在对话历史中）",
@@ -308,8 +364,50 @@ async def run_segment_node(state: AgentState) -> dict:
             tool_message = await tool.ainvoke(call)
             local_messages.append(tool_message)
 
-    final_text = response.content if response is not None else ""
-    return {"segment_responses": [{"agent_type": agent_type, "text": final_text}]}
+    return response.content if response is not None else ""
+
+
+async def run_segment_node(state: AgentState) -> dict:
+    """处理 intent_segments 里的某一段，独立跑完自己的工具调用循环（如果需要），
+    结果写进 segment_responses 累加，不直接进 messages。
+
+    这一段失败时绝不让异常往外传播：Send 并发扇出里只要有一个分支抛异常，
+    LangGraph 会把整个运行一起弄挂，连累其他已经成功产出结果的分支（这是
+    实测验证过的真实行为，不是猜测）。所以这里内部兜住所有异常，可重试的
+    瞬时错误（超时/限流/部分 5xx）按指数退避重试几次，重试用尽或者是
+    "重试也没用"的确定性错误，就把这一段标成 status=failed，交给 merge_node
+    决定怎么优雅降级——不管这一段最终成不成功，run_segment_node 本身
+    永远正常返回，不抛异常。
+    """
+    segment = state["current_segment"]
+    agent_type = segment["agent_type"]
+    retryable = agent_type in _SEGMENT_RETRYABLE_AGENT_TYPES
+
+    last_error: BaseException | None = None
+    max_attempts = _SEGMENT_MAX_RETRIES + 1 if retryable else 1
+
+    for attempt in range(max_attempts):
+        try:
+            final_text = await _run_segment_once(state, agent_type, segment)
+            return {"segment_responses": [{
+                "agent_type": agent_type, "status": "success",
+                "text": final_text, "error": None, "retry_count": attempt,
+            }]}
+        except Exception as e:
+            last_error = e
+            is_last_attempt = attempt == max_attempts - 1
+            if is_last_attempt or not _is_retryable_error(e):
+                break
+            delay = _SEGMENT_RETRY_BASE_DELAY * (2 ** attempt)
+            print(f"[WARN] run_segment({agent_type}) 第 {attempt + 1} 次尝试遇到可重试错误，"
+                  f"{delay:.1f}s 后重试: {e}")
+            await asyncio.sleep(delay)
+
+    print(f"[WARN] run_segment({agent_type}) 最终失败，放弃这一段（不影响其他分支）: {last_error}")
+    return {"segment_responses": [{
+        "agent_type": agent_type, "status": "failed",
+        "text": "", "error": str(last_error), "retry_count": attempt,
+    }]}
 
 
 _MERGE_PROMPT = (
@@ -320,19 +418,36 @@ _MERGE_PROMPT = (
 )
 
 
+_ALL_SEGMENTS_FAILED_FALLBACK = "抱歉，刚才处理你这句话的时候出了点问题，能再说一次吗？"
+
+
 async def merge_node(state: AgentState) -> dict:
-    """把 run_segment 各分支的回答合成一条最终回复。只有一段时（绝大多数情况
-    路由到这里都是因为上游误判成了多段，或者未来调整了拆分阈值）直接透传，
-    不额外调 LLM——避免多花一次调用去"合并"本来就只有一段的内容。
+    """把 run_segment 各分支里成功的回答合成一条最终回复，失败的分支不参与
+    合并，只在最后附一句口语化的降级提示——graceful degradation 优先于
+    fail-fast：只要还有分支成功，就用成功的内容正常回复，不因为某一个
+    分支失败就让整轮对话变成系统报错。只有全部分支都失败时，才整体退化成
+    一句抱歉（这是唯一"暴露给用户一个不完整结果"的情况，因为确实没有任何
+    可用内容）。
     """
     responses = state.get("segment_responses") or []
-    if len(responses) <= 1:
-        text = responses[0]["text"] if responses else ""
+    succeeded = [r for r in responses if r.get("status", "success") == "success"]
+    failed = [r for r in responses if r.get("status") == "failed"]
+
+    if not succeeded:
+        text = _ALL_SEGMENTS_FAILED_FALLBACK if failed else ""
         return {"messages": [AIMessage(content=text)]}
 
-    drafts = "\n\n".join(f"[{r['agent_type']}] {r['text']}" for r in responses)
-    response = await _get_empathy_llm().ainvoke(_MERGE_PROMPT.format(drafts=drafts))
-    return {"messages": [AIMessage(content=response.content)]}
+    if len(succeeded) == 1:
+        text = succeeded[0]["text"]
+    else:
+        drafts = "\n\n".join(f"[{r['agent_type']}] {r['text']}" for r in succeeded)
+        response = await _get_empathy_llm().ainvoke(_MERGE_PROMPT.format(drafts=drafts))
+        text = response.content
+
+    for r in failed:
+        text += "\n\n" + _segment_failure_note(r["agent_type"])
+
+    return {"messages": [AIMessage(content=text)]}
 
 
 def route_after_router(state: AgentState):
