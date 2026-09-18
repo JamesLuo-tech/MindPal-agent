@@ -131,8 +131,13 @@ async def router_node(state: AgentState) -> dict:
             last_user_msg = msg.content
             break
 
-    # 第一层：危机关键词（无需 LLM，只看当前这句，不需要历史，也不做拆分）
-    if any(kw in last_user_msg for kw in CRITICAL_KEYWORDS):
+    # 第一层：危机关键词（无需 LLM，只看当前这句，不需要历史，也不做拆分）。
+    # 同时 OR 上 state 里已经传进来的 crisis_triggered——chat_service.py
+    # 在调这个图之前已经跑过 assess_crisis()（关键词 + LLM 语义判断两层），
+    # 如果是 LLM 单独判断出来的（关键词没命中这句话，但语义上有风险），
+    # 这里的关键词复扫不会再命中一次，必须尊重已经传进来的 True，不能
+    # 因为这个节点自己只查关键词就把它当成 False 处理。
+    if state.get("crisis_triggered") or any(kw in last_user_msg for kw in CRITICAL_KEYWORDS):
         return {
             "agent_type": "empathy",
             "crisis_triggered": True,
@@ -484,8 +489,17 @@ def should_continue_action(state: AgentState) -> str:
 async def crisis_check_node(state: AgentState) -> dict:
     """扫描最近的用户消息，若含危机关键词则设置 crisis_triggered 标志。
 
-    实际热线文字的追加由 chat_service 在流式输出后处理，
-    这里只负责检测并打标，保持图节点的职责单一。
+    实际热线文字的追加由 chat_service 在流式输出后处理（用的是
+    chat_service 自己在这轮开始时跑的 assess_crisis 两层判断结果，不是
+    这个节点的输出——这个节点跑在 astream_events 的事件流里，chat_service
+    目前不读取图执行完的最终 state），这里只负责检测并打标，保持图节点
+    的职责单一。
+
+    crisis_triggered 字段没有用 operator.add 之类的 reducer，是"后面的
+    节点覆盖前面的"——如果这里只看关键词、不管 state 里已经传进来的值，
+    会把 router_node（或者更上游 chat_service 的 LLM 语义判断）已经标好的
+    True 覆盖回 False，所以要 OR 上已有值，不能凭自己这一次关键词扫描
+    独立下结论。
     """
     user_content = ""
     for msg in reversed(list(state["messages"])):
@@ -493,7 +507,7 @@ async def crisis_check_node(state: AgentState) -> dict:
             user_content = msg.content
             break
 
-    triggered = any(kw in user_content for kw in CRITICAL_KEYWORDS)
+    triggered = state.get("crisis_triggered") or any(kw in user_content for kw in CRITICAL_KEYWORDS)
     return {"crisis_triggered": triggered}
 
 

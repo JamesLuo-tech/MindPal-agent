@@ -14,9 +14,9 @@ from langchain_core.messages import AIMessage, HumanMessage
 import app.database as _db
 from app.agent.actions import ACTION_TOOL_NAMES
 from app.agent.crisis import (
-    CRITICAL_KEYWORDS,
     HOTLINE_APPEND,
-    check_and_append_hotline,
+    append_hotline_if_triggered,
+    assess_crisis,
     save_crisis_event,
 )
 from app.agent.emotion import extract_emotion, save_emotion
@@ -247,10 +247,26 @@ async def stream_chat(
         print(f"[WARN] 加载反思笔记失败: {e}")
         self_critique_note = ""
 
-    # 命中危机关键词时，把用户自己写过的安全计划一并给 Agent 参考，
-    # 让回应能落到"你安全计划里写的那个方法，要不要现在试试"这种具体程度，
-    # 而不是每轮对话都带上（避免闲聊时被突兀地提起）
-    if any(kw in user_message for kw in CRITICAL_KEYWORDS):
+    # [2.5] 危机判断——两层："关键词字面匹配" 或 "关键词没命中时，LLM 判断
+    # 这句话语义上是不是危机信号"。只判断这一次，结果贯穿这一轮对话的全流程
+    # （下面给 Agent 参考安全计划、graph_input 的初始 crisis_triggered、
+    # 最后要不要追加热线文案、要不要写审计日志），不再让好几个地方各自
+    # 重新用关键词扫一遍——那样不仅重复扫描浪费，还会让"到底是不是危机"
+    # 这件事在同一轮对话里因为用了不同判断逻辑而得出不一致的结论。
+    #
+    # 这里会多一次 LLM 调用（关键词没命中时）——对绝大多数正常聊天消息
+    # 都会触发，是有意识接受的延迟/成本代价：漏判一个真正有危机信号的
+    # 用户，比多等一两百毫秒、多一次很便宜的分类调用严重得多。
+    try:
+        crisis_triggered, matched_keyword = await assess_crisis(user_message, get_llm())
+    except Exception as e:
+        print(f"[WARN] 危机判断整体失败，保守起见不算命中（关键词匹配已经在 assess_crisis 内部兜底过一次）: {e}")
+        crisis_triggered, matched_keyword = False, None
+
+    # 命中危机时，把用户自己写过的安全计划一并给 Agent 参考，让回应能落到
+    # "你安全计划里写的那个方法，要不要现在试试"这种具体程度，而不是每轮
+    # 对话都带上（避免闲聊时被突兀地提起）
+    if crisis_triggered:
         try:
             safety_plan_text = await load_safety_plan(user_id, pool)
             if safety_plan_text:
@@ -271,7 +287,7 @@ async def stream_chat(
         "user_id": str(user_id),
         "conversation_id": str(conversation_id),
         "long_term_memory": long_term,
-        "crisis_triggered": False,
+        "crisis_triggered": crisis_triggered,
         "agent_type": "",
         "intent_segments": [],
         "segment_responses": [],
@@ -328,8 +344,10 @@ async def stream_chat(
     used_tools = result["used_tools"]
     segment_drafts = result["segment_drafts"]
 
-    # [5] 危机检测
-    final_response, crisis_triggered, matched_keyword = check_and_append_hotline(user_message, full_response)
+    # [5] 追加热线文案——危机判断本身已经在 [2.5] 做完了（两层：关键词 或
+    # LLM 语义判断），这里复用同一个结果，不重新判断一次，避免这一轮对话
+    # 里"是不是危机"这件事被两处不同的逻辑各自决定出不一致的答案。
+    final_response = append_hotline_if_triggered(full_response, crisis_triggered)
     if crisis_triggered:
         yield _sse("message", {"delta": HOTLINE_APPEND})
 
